@@ -38,6 +38,61 @@ def draw_text(surface, assets, text, pos, font="body", color=INK,
     return rect
 
 
+def legible(colour, floor=None):
+    """`colour`, lifted toward white just far enough to read on a panel.
+
+    **For text drawn in a colour that means something** (§95) - a hair or
+    an outfit in the character creator is written in its own swatch, and
+    *Black*, *Deep*, *Umber* and *Slate* were dark text on a dark panel.
+    The floor is `FAINT`'s brightness, the dimmest text the game already
+    uses, so a colour bright enough is returned untouched and a dark one
+    keeps its hue and only gains light.
+    """
+    floor = _luma(FAINT) if floor is None else floor
+    r, g, b = colour[:3]
+    luma = _luma((r, g, b))
+    if luma >= floor:
+        return (r, g, b)
+    t = (floor - luma) / max(1.0, 255.0 - luma)
+    return (int(round(r + (255 - r) * t)), int(round(g + (255 - g) * t)),
+            int(round(b + (255 - b) * t)))
+
+
+def _luma(colour):
+    r, g, b = colour[:3]
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+_DIM_SHEETS = {}
+
+
+def tint_screen(surface, colour, alpha):
+    """Lay one flat colour over the whole of `surface` at `alpha`.
+
+    **A cached sheet with one alpha, not a fresh layer every frame**
+    (§95). Every menu's backdrop, the chapter card and the night all did
+    `pygame.Surface(size, SRCALPHA)`, filled it and blended it back, every
+    frame - eight megabytes allocated and five milliseconds spent at
+    1920x1080 to say "a bit darker". A surface-wide alpha blends the same
+    colour by the same amount; the arithmetic rounds differently by at
+    most one step in a channel, which nobody can see.
+    """
+    alpha = int(alpha)
+    if alpha <= 0:
+        return
+    size = surface.get_size()
+    key = (size, tuple(colour[:3]))
+    sheet = _DIM_SHEETS.get(key)
+    if sheet is None:
+        if len(_DIM_SHEETS) > 12:
+            _DIM_SHEETS.clear()           # a window dragged through sizes
+        sheet = pygame.Surface(size)
+        sheet.fill(colour[:3])
+        _DIM_SHEETS[key] = sheet
+    sheet.set_alpha(min(255, alpha))
+    surface.blit(sheet, (0, 0))
+
+
 def panel(surface, rect, fill=PANEL_BG, edge=PANEL_EDGE, alpha=236, radius=6):
     """Rounded translucent panel with a bright inner rule.
 
@@ -52,15 +107,54 @@ def panel(surface, rect, fill=PANEL_BG, edge=PANEL_EDGE, alpha=236, radius=6):
     if rect.w <= 0 or rect.h <= 0:
         # Still the rect, because callers lay out against what comes back.
         return rect
-    layer = pygame.Surface(rect.size, pygame.SRCALPHA)
-    pygame.draw.rect(layer, (*fill, alpha), layer.get_rect(),
-                     border_radius=radius)
-    pygame.draw.rect(layer, (*edge, 255), layer.get_rect(), 2,
-                     border_radius=radius)
-    pygame.draw.rect(layer, (*shade(edge, 0.55), 140),
-                     layer.get_rect().inflate(-6, -6), 1, border_radius=radius)
+    key = ("panel", rect.size, tuple(fill), tuple(edge), alpha, radius)
+    layer = _LAYERS.get(key)
+    if layer is None:
+        layer = pygame.Surface(rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(layer, (*fill, alpha), layer.get_rect(),
+                         border_radius=radius)
+        pygame.draw.rect(layer, (*edge, 255), layer.get_rect(), 2,
+                         border_radius=radius)
+        pygame.draw.rect(layer, (*shade(edge, 0.55), 140),
+                         layer.get_rect().inflate(-6, -6), 1,
+                         border_radius=radius)
+        _LAYERS.put(key, layer)
     surface.blit(layer, rect.topleft)
     return rect
+
+
+class _LayerCache:
+    """Built layers kept by what they look like, within a memory budget.
+
+    **A panel is the same picture every frame** (§95), and it was being
+    rebuilt every frame: a fresh translucent surface the size of the
+    panel, three rounded rectangles, then the blend - so a menu's frame,
+    most of a 1920x1080 window, was allocated sixty times a second. Kept
+    here instead, keyed on size and colours. The budget is bytes rather
+    than entries because one frame is worth a thousand row highlights;
+    past it everything goes, which is simpler than an LRU and only
+    happens when a window is dragged through sizes.
+    """
+
+    BUDGET = 48 * 1024 * 1024
+
+    def __init__(self):
+        self.layers = {}
+        self.used = 0
+
+    def get(self, key):
+        return self.layers.get(key)
+
+    def put(self, key, layer):
+        cost = layer.get_width() * layer.get_height() * 4
+        if self.used + cost > self.BUDGET:
+            self.layers.clear()
+            self.used = 0
+        self.layers[key] = layer
+        self.used += cost
+
+
+_LAYERS = _LayerCache()
 
 
 def bar(surface, rect, ratio, fg, bg=(46, 42, 58), edge=(12, 10, 18),
@@ -153,12 +247,18 @@ def highlight(surface, rect, color=ACCENT, fill_alpha=52, border=2,
     rect = pygame.Rect(rect)
     if rect.w <= 0 or rect.h <= 0:
         return rect                 # nothing to highlight; see `panel`
-    layer = pygame.Surface(rect.size, pygame.SRCALPHA)
-    pygame.draw.rect(layer, (*color[:3], fill_alpha), layer.get_rect(),
-                     border_radius=radius)
-    if border:
-        pygame.draw.rect(layer, (*color[:3], 235), layer.get_rect(), border,
+    # Kept, like a panel (§95) - a list redraws every highlight each frame.
+    key = ("highlight", rect.size, tuple(color[:3]), fill_alpha, border,
+           radius)
+    layer = _LAYERS.get(key)
+    if layer is None:
+        layer = pygame.Surface(rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(layer, (*color[:3], fill_alpha), layer.get_rect(),
                          border_radius=radius)
+        if border:
+            pygame.draw.rect(layer, (*color[:3], 235), layer.get_rect(),
+                             border, border_radius=radius)
+        _LAYERS.put(key, layer)
     surface.blit(layer, rect.topleft)
     return rect
 
@@ -476,14 +576,21 @@ class ShotLayer:
             width = max(2, int(9 * size * (1.0 - t)))
             if width <= 0:
                 return
-            layer = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+            # A layer the size of the line, not of the window (§95): it
+            # is rebuilt every frame the beam is fading.
+            pad = width * 2 + 8
+            box = pygame.Rect(min(shot.x0, shot.x1), min(shot.y0, shot.y1),
+                              abs(shot.x1 - shot.x0) + 1,
+                              abs(shot.y1 - shot.y0) + 1).inflate(pad, pad)
+            box.x, box.y = int(box.x), int(box.y)
+            start = (shot.x0 - box.x, shot.y0 - box.y)
+            end = (shot.x1 - box.x, shot.y1 - box.y)
+            layer = pygame.Surface(box.size, pygame.SRCALPHA)
             pygame.draw.line(layer, (*core, int(210 * (1.0 - t))),
-                             (shot.x0, shot.y0), (shot.x1, shot.y1),
-                             width + 4)
+                             start, end, width + 4)
             pygame.draw.line(layer, (*white, int(230 * (1.0 - t))),
-                             (shot.x0, shot.y0), (shot.x1, shot.y1),
-                             max(1, width // 2))
-            surface.blit(layer, (0, 0))
+                             start, end, max(1, width // 2))
+            surface.blit(layer, box.topleft)
             return
 
         if shot.look == "wave":

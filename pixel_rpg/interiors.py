@@ -121,6 +121,9 @@ def build(world_seed, door, tile=32):
     # room draws top-left with two thirds of the window empty.
     room_x = WORLD_W // 2 - room_w // 2
     room_y = WORLD_H // 2 - room_h // 2
+    # Where the room is, so the camera can frame it rather than the player
+    # standing in its doorway (§95). Not saved - a room never is.
+    room.room_bounds = (room_x, room_y, room_w, room_h)
 
     # **Everything that is not the room is wall.** A `World` starts as
     # grass edge to edge, so without this the house is a room standing in

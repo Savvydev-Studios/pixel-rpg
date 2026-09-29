@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 import contextlib
 import random
+import zlib
 from dataclasses import dataclass, field
 
 # ---------------------------------------------------------------- numbers ---
@@ -16,6 +17,19 @@ from dataclasses import dataclass, field
 # to clamp an item level and cannot import `entities` - `entities` imports
 # `items`. A constant two modules share belongs under both of them.
 MAX_LEVEL = 100
+
+
+def stable_seed(value, modulo=9973):
+    """A number made from `value` that is the same everywhere, every time.
+
+    **Not `hash()`** (§95). Python salts the hash of a string differently
+    in every process, so `abs(hash(arena.key)) % 9973` put an arena's
+    cover somewhere new on every launch - and, in a room, somewhere
+    different on the host and the guest: the host's heroes walked round
+    rocks the guest could not see, and stopped at ones the guest could.
+    CRC32 of the value's `repr` is plain arithmetic on its bytes.
+    """
+    return zlib.crc32(repr(value).encode("utf-8")) % modulo
 
 
 def clamp(v, lo, hi):

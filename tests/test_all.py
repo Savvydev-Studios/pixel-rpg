@@ -55,7 +55,7 @@ from pixel_rpg.quests import QuestLog
 from pixel_rpg.save import (SaveManager, build_payload, compute_checksum,
                             deserialize_player, serialize_player)
 from pixel_rpg.skills import Status, modifier, skills_for_level
-from pixel_rpg.util import RNG, clamp, wrap_text
+from pixel_rpg.util import RNG, clamp, stable_seed, wrap_text
 
 
 BACKSLASH = chr(92)   # spelled this way so no escape sequence can be mangled
@@ -17562,7 +17562,7 @@ class TestTheHoard(unittest.TestCase):
         fight = self.arena()
         for arena in gamemodes.ARENAS:
             fight.blockers = fr.plan_blockers(getattr(arena, "plan", "open"),
-                                              abs(hash(arena.key)) % 9973)
+                                              stable_seed(arena.key))
             fight.clear_camp()
             for bx, by, radius in fight.blockers:
                 gap = math.hypot(bx - fight.bank[0], by - fight.bank[1])
@@ -18622,6 +18622,212 @@ class TestTheDoorStartsOnYourEnding(unittest.TestCase):
         line that was in the wrong place."""
         game = self.door({"no such ending": 9})
         self.assertEqual(game.ui.ending_index, 0)
+
+
+class TestTheNightBeforeThePlaytest(unittest.TestCase):
+    """s95. What the overnight polish pass decided, one test a decision.
+
+    His, going to sleep on 2026-09-29: *"smoothing out the game, making
+    sure there are little to none issues making it looks beautiful and
+    smooth"*. Most of what that found was drawing, and a screenshot is the
+    proof of drawing (rule 31.4). These are the rules underneath it.
+    """
+
+    def game(self, size=(1280, 720)):
+        from pixel_rpg import game as G
+        _display_only()
+        game = G.Game()
+        game.screen = pygame.display.set_mode(size)
+        game.pending_class = "warden"
+        game.new_run("Framer", 6)
+        game.dialogue = None
+        self.addCleanup(game.saves.delete, 6)
+        return game
+
+    # --- a room is framed, not followed -------------------------------
+    def test_a_room_that_fits_is_framed_by_its_middle(self):
+        game = self.game()
+        game.enter_house((40, 40))
+        rx, ry, rw, rh = game.world.room_bounds
+        x, y = game.camera_target()
+        self.assertEqual(x, (rx + rw / 2) * game.tile)
+        self.assertEqual(y, (ry + rh / 2) * game.tile)
+        # and it stays put while you walk about inside it
+        game.player.x += game.tile * 3
+        self.assertEqual(game.camera_target()[0], x)
+
+    def test_a_room_wider_than_the_window_still_follows_you(self):
+        game = self.game((390, 844))
+        game.enter_house((40, 40))
+        rx, ry, rw, rh = game.world.room_bounds
+        self.assertGreater(rw * game.tile, game.camera.view_w)
+        self.assertEqual(game.camera_target()[0], game.player.x)
+
+    def test_outdoors_the_camera_follows_the_player(self):
+        game = self.game()
+        self.assertEqual(game.camera_target(),
+                         (game.player.x, game.player.y))
+
+    # --- a colour that means something still has to be read ------------
+    def test_legible_leaves_a_bright_colour_alone(self):
+        from pixel_rpg.ui import legible
+        self.assertEqual(legible((250, 200, 96)), (250, 200, 96))
+
+    def test_legible_lifts_a_dark_one_to_the_faintest_text(self):
+        from pixel_rpg.ui import FAINT, _luma, legible
+        for dark in ((20, 18, 22), (60, 40, 30), (70, 76, 88)):
+            lifted = legible(dark)
+            self.assertGreaterEqual(_luma(lifted), _luma(FAINT) - 1, dark)
+            # it keeps its hue: the channel that led still leads
+            self.assertEqual(max(range(3), key=lambda i: dark[i]),
+                             max(range(3), key=lambda i: lifted[i]))
+
+    # --- darkening the screen, cheaply --------------------------------
+    def test_tint_screen_matches_the_old_layer_to_a_rounding_step(self):
+        from pixel_rpg.ui import tint_screen
+        _display_only()
+        size = (64, 48)
+        base = pygame.Surface(size)
+        for x in range(64):
+            for y in range(48):
+                base.set_at((x, y), ((x * 4) % 256, (y * 5) % 256, 90))
+        old, new = base.copy(), base.copy()
+        layer = pygame.Surface(size, pygame.SRCALPHA)
+        layer.fill((6, 5, 10, 176))
+        old.blit(layer, (0, 0))
+        tint_screen(new, (6, 5, 10), 176)
+        a = pygame.image.tostring(old, "RGB")
+        b = pygame.image.tostring(new, "RGB")
+        self.assertLessEqual(max(abs(p - q) for p, q in zip(a, b)), 1)
+
+    def test_tint_screen_at_nothing_draws_nothing(self):
+        from pixel_rpg.ui import tint_screen
+        _display_only()
+        surface = pygame.Surface((8, 8))
+        surface.fill((40, 50, 60))
+        tint_screen(surface, (0, 0, 0), 0)
+        self.assertEqual(surface.get_at((3, 3))[:3], (40, 50, 60))
+
+    # --- kept layers ----------------------------------------------------
+    def test_the_layer_cache_stays_inside_its_budget(self):
+        from pixel_rpg.ui import _LayerCache
+        _display_only()
+        cache = _LayerCache()
+        cache.BUDGET = 64 * 64 * 4 * 3
+        for n in range(10):
+            cache.put(n, pygame.Surface((64, 64)))
+            self.assertLessEqual(cache.used, cache.BUDGET)
+        self.assertIsNotNone(cache.get(9))
+
+    def test_a_kept_panel_looks_like_a_fresh_one(self):
+        from pixel_rpg import ui
+        _display_only()
+        first = pygame.Surface((200, 120))
+        second = pygame.Surface((200, 120))
+        ui.panel(first, (10, 10, 150, 80))
+        ui.panel(second, (10, 10, 150, 80))          # from the cache
+        self.assertEqual(pygame.image.tostring(first, "RGB"),
+                         pygame.image.tostring(second, "RGB"))
+
+    # --- the battle backdrop ------------------------------------------
+    def test_the_drifting_skylines_are_run_length_encoded(self):
+        from pixel_rpg import battlescreen
+        from pixel_rpg.assets import Assets
+        _display_only()
+        for layer in battlescreen.backdrop_layers(
+                Assets(), (320, 180), (40, 30, 70), "spires", 7):
+            # RLEACCELOK when asked for; RLEACCEL once the first blit
+            # has encoded it - either says it is on.
+            self.assertTrue(layer.get_flags()
+                            & (pygame.RLEACCEL | pygame.RLEACCELOK))
+
+    def test_motes_are_where_they_always_were(self):
+        """Drawn as squares instead of through a window-sized layer, and
+        pixel for pixel the same picture."""
+        import math
+        from pixel_rpg import battlescreen as B
+        _display_only()
+        size = (320, 180)
+
+        def old(surface, kind, elapsed, alpha=70):
+            count, colour, speed = B.MOTES.get(kind, B.MOTES["hills"])
+            width, height = surface.get_size()
+            layer = pygame.Surface((width, height), pygame.SRCALPHA)
+            for i in range(count):
+                phase = i * 2.39996
+                x = (math.sin(phase) * 0.5 + 0.5) * width
+                x = ((x + elapsed * speed * (0.5 + (i % 3) * 0.4))
+                     % (width + 20) - 10)
+                y = ((math.cos(phase * 1.7) * 0.5 + 0.5) * height * 0.62
+                     + math.sin(elapsed * 0.6 + phase) * 6.0)
+                side = 1 + (i % 3)
+                pygame.draw.rect(layer, colour + (alpha,),
+                                 (int(x), int(y), side, side))
+            surface.blit(layer, (0, 0))
+
+        for kind in B.MOTES:
+            for elapsed in (0.0, 3.7, 41.2):
+                a = pygame.Surface(size)
+                a.fill((30, 20, 50))
+                b = a.copy()
+                old(a, kind, elapsed)
+                B.draw_motes(b, kind, elapsed)
+                self.assertEqual(pygame.image.tostring(a, "RGB"),
+                                 pygame.image.tostring(b, "RGB"),
+                                 (kind, elapsed))
+
+    # --- words --------------------------------------------------------
+    def test_no_guide_paragraph_is_mistaken_for_a_table(self):
+        """A line starting with a space is kept as written, because it is
+        a table. Two such lines where the first stops mid-sentence and the
+        next carries on in lower case are a paragraph that was indented,
+        and it rendered broken in two places with its indent lost."""
+        from pixel_rpg import guide
+        for page in guide.PAGES:
+            lines = list(page.lines)
+            for this, after in zip(lines, lines[1:]):
+                if not (this.startswith(" ") and after.startswith(" ")):
+                    continue
+                first = after.strip()[:1]
+                self.assertFalse(
+                    this.rstrip()[-1:].isalpha() and first.islower(),
+                    "%s: %r runs on into %r" % (page.title, this, after))
+
+    def test_an_arena_is_the_same_place_on_every_machine(self):
+        """Cover and ground from `stable_seed`, not a salted `hash()`: two
+        processes with different hash salts are two machines in one room,
+        and they must agree on where the rocks are."""
+        import subprocess
+        probe = (
+            "from pixel_rpg import freeroam, gamemodes, textures\n"
+            "from pixel_rpg.util import stable_seed\n"
+            "out = []\n"
+            "for a in gamemodes.ARENAS:\n"
+            "    out.append([tuple(round(v, 3) for v in b) for b in\n"
+            "        freeroam.plan_blockers(getattr(a, 'plan', 'open'),\n"
+            "                               stable_seed(a.key))])\n"
+            "out.append(stable_seed(('grass', 2), 2 ** 31))\n"
+            "print(repr(out))\n")
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        seen = []
+        for salt in ("1", "2"):
+            env = dict(os.environ, PYTHONHASHSEED=salt)
+            seen.append(subprocess.run(
+                [sys.executable, "-c", probe], cwd=root, env=env,
+                capture_output=True, text=True, check=True).stdout)
+        self.assertEqual(seen[0], seen[1])
+        self.assertTrue(seen[0].strip())
+
+    def test_a_codex_row_holds_both_of_its_lines(self):
+        from pixel_rpg.assets import Assets
+        _display_only()
+        assets = Assets()
+        title_h = assets.font("body").get_height()
+        preview_y = 4 + title_h + 1
+        row_h = max(44, preview_y + assets.font("tiny").get_height() + 5 + 6)
+        box_h = row_h - 6
+        self.assertLessEqual(preview_y + assets.font("tiny").get_height(),
+                             box_h - 2, "the preview sits on the border")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

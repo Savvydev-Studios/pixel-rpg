@@ -314,7 +314,12 @@ class Assets:
     def vignette(self, size):
         key = ("vignette", size)
         if key not in self._misc:
-            self._misc[key] = radial_vignette(size)
+            vignette = radial_vignette(size)
+            # Run-length encoded (§95): the middle is fully clear, and RLE
+            # skips a clear run instead of blending it. It is laid over the
+            # whole island every frame; byte-identical, half the time.
+            vignette.set_alpha(255, pygame.RLEACCEL)
+            self._misc[key] = vignette
         return self._misc[key]
 
     def gradient(self, size, top, bottom):

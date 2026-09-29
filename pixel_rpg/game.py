@@ -48,8 +48,9 @@ from .save import (GuestVault, SaveManager, build_payload,
 from .ui import (ACCENT, BAD, DIM, GOOD, INK, Fade, FloatingTextLayer,
                 ShotLayer,
                  ParticleSystem, ToastQueue, Tween, bar, draw_text,
-                 ellipsize, hp_color, key_hint, panel, status_chips)
-from .util import clamp, commafy, pulse, rng
+                 ellipsize, hp_color, key_hint, panel, status_chips,
+                 tint_screen)
+from .util import clamp, commafy, pulse, rng, stable_seed
 from .world import (BIOMES, TILES, Camera, World, WORLD_H, WORLD_W,
                     enemy_kin, siblings_of)
 
@@ -1186,7 +1187,7 @@ class Game:
         arena = frs.arena_of(self)
         fight.blockers = freeroam.plan_blockers(
             getattr(arena, "plan", "open"),
-            abs(hash(arena.key)) % 9973)
+            stable_seed(arena.key))
 
     def dress_arena(self, arena):
         """Hand the fight the colour of the place it is happening in.
@@ -2135,7 +2136,7 @@ class Game:
         self.strip_world_for_modifiers()
         self.state = OVERWORLD
         self.camera.resize(*self.screen.get_size())
-        self.camera.follow(self.player.x, self.player.y, 0.0, snap=snap)
+        self.camera.follow(*self.camera_target(), 0.0, snap=snap)
         self.hp_tween.set(self.player.hp / max(1, self.player.max_hp()), snap)
         self.mp_tween.set(self.player.mp / max(1, self.player.max_mp()), snap)
         self.last_tile = self.player_tile()
@@ -5433,6 +5434,27 @@ class Game:
         self.toast(interiors.room_note(door), DIM, 4.0)
         self.sfx("select")
 
+    def camera_target(self):
+        """Where the camera looks: the player - or, indoors, the room.
+
+        **A room that fits the window is framed, not followed** (§95).
+        You come in at the door in the south wall, and a camera centred on
+        you there hangs the whole room above your head with half the
+        window blank wall beneath it. Each axis on its own: a room too
+        wide for a narrow window still follows you across, and one too
+        tall still follows you up.
+        """
+        x, y = self.player.x, self.player.y
+        bounds = (getattr(self.world, "room_bounds", None)
+                  if self.house is not None else None)
+        if bounds:
+            rx, ry, rw, rh = bounds
+            if rw * self.tile <= self.camera.view_w:
+                x = (rx + rw / 2) * self.tile
+            if rh * self.tile <= self.camera.view_h:
+                y = (ry + rh / 2) * self.tile
+        return x, y
+
     def leave_house(self):
         """Back out onto the step you came in from."""
         if self.house is None:
@@ -5933,9 +5955,7 @@ class Game:
 
         tint = self.night_tint()
         if tint:
-            layer = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
-            layer.fill(tint)
-            surface.blit(layer, (0, 0))
+            tint_screen(surface, tint[:3], tint[3])
         surface.blit(self.assets.vignette(surface.get_size()), (0, 0))
 
     def objective(self):
@@ -6608,7 +6628,7 @@ class Game:
                 # walked into should catch you on the frame you touched
                 # it, not on the next one (item 0aj).
                 self.update_wanderers(dt)
-            self.camera.follow(self.player.x, self.player.y, dt)
+            self.camera.follow(*self.camera_target(), dt)
             self.spawn_ambient(dt)
             if self.settings.autosave and self.autosave_cooldown.trigger():
                 self.save_run(silent=True, force=True)
@@ -6618,7 +6638,7 @@ class Game:
             self.battle.update(dt)
             self.enemy_hp_tween.set(
                 self.battle.enemy.hp / max(1, self.battle.enemy.max_hp()))
-            self.camera.follow(self.player.x, self.player.y, dt)
+            self.camera.follow(*self.camera_target(), dt)
             # A mirror never ends its own fight. The host says when it is
             # over and what it paid; deciding that locally would be this
             # machine writing its own rewards.

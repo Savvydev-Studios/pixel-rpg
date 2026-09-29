@@ -74,7 +74,11 @@ from .config import DIFFICULTIES
 # is party-wide when the room is assembled (decision 4). A build that
 # does not know `boss` would leave one player fighting it alone while
 # everybody else stood at the gate.
-PROTOCOL = 12
+# 13 (s95): an arena's cover and backdrop come from `util.stable_seed`
+# rather than a per-process salted `hash()`. Two 4.40 machines now agree
+# where the rocks are; a 4.39 and a 4.40 cannot, and a guest simulated
+# around rocks it cannot see is the disagreement this number is for.
+PROTOCOL = 13
 MAX_NAME = 18
 # A player who has said nothing for this long has gone.
 TIMEOUT = 12.0

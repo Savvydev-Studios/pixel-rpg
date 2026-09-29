@@ -22,7 +22,7 @@ from .assets import vertical_gradient
 from .battlescreen import _shade, draw_motes
 from .ui import (ACCENT, BAD, DIM, GOOD, INK, bar, draw_text, ellipsize,
                  hp_color, key_hint, panel)
-from .util import clamp, pulse
+from .util import clamp, pulse, stable_seed
 
 #: The arena is a fixed size in world units and the window is not, so it
 #: is drawn scaled to fit with a margin. One transform, worked out once a
@@ -203,7 +203,7 @@ def arena_thumbnail(assets, size, arena):
     # The skyline, borrowed from the battle backdrop so the two agree
     # about what this place looks like.
     for layer in backdrop_layers(assets, size, _shade(wash, 0.42),
-                                 arena.scene, abs(hash(arena.scene)) % 9973):
+                                 arena.scene, stable_seed(arena.scene)):
         shot.blit(layer, (0, 0))
     floor = pygame.Rect(int(width * 0.06), int(height * 0.42),
                         int(width * 0.88), int(height * 0.5))
@@ -217,7 +217,7 @@ def arena_thumbnail(assets, size, arena):
     scale = floor.w / max(1.0, fr.ARENA_W)
     top, side = _shade(wash, 0.74), _shade(wash, 0.42)
     for bx, by, radius in fr.plan_blockers(
-            getattr(arena, "plan", "open"), abs(hash(arena.key)) % 9973):
+            getattr(arena, "plan", "open"), stable_seed(arena.key)):
         wide = max(2, int(radius * 1.42 * scale))
         x = int(floor.x + bx * scale) - wide // 2
         y = int(floor.y + by * (floor.h / max(1.0, fr.ARENA_H))) - wide // 2
@@ -428,8 +428,6 @@ def draw_roam_hud(game, fight, width, height):
         clamp(who.mp / max(1, who.max_mp()), 0, 1), (86, 152, 236),
         assets=assets)
 
-    night_w = min(180, max(96, (width - MARGIN * 3) // 3))
-    night_w = min(180, max(96, (width - MARGIN * 3) // 3))
     if fight.hoard and getattr(game, "hoard", None) is not None:
         # A hoard's right-hand plate says something else entirely, and
         # it is wider because a clock and two counts need the room.

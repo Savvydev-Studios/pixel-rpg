@@ -204,6 +204,20 @@ def tag_decor(assets):
 
         setattr(assets, name, wrap(original))
 
+    # **The air in front of a battle is scenery too** (§95). Motes were one
+    # window-sized layer, which this file never counted as a sprite; they
+    # are one small square each now, and they drift off the edges on
+    # purpose - so they are registered the way the ground is.
+    if not getattr(battlescreen._mote, "_tagged", False):
+        speck = battlescreen._mote
+
+        def tagged_mote(*args, **kwargs):
+            out = speck(*args, **kwargs)
+            DECOR.add(id(out))
+            return out
+        tagged_mote._tagged = True
+        battlescreen._mote = tagged_mote
+
 
 def rec_text(surface, assets, text, pos, font="body", color=ui.INK,
              center=False, shadow=True, right=False):

@@ -15,7 +15,7 @@ import math
 
 import pygame
 
-from .util import RNG, clamp, lerp_color, shade
+from .util import RNG, clamp, lerp_color, shade, stable_seed
 
 VARIANTS = 4
 
@@ -325,7 +325,9 @@ def make_tile(name, size, frame=0, variant=0):
     """One tile texture. Deterministic in (name, frame, variant)."""
     base, accent, generator, animated = MATERIALS.get(name,
                                                       MATERIALS["grass"])
-    rng = RNG(abs(hash((name, variant))) % (2 ** 31))
+    # `stable_seed`, not `hash()`: the ground looked different on every
+    # launch, because a string's hash is salted per process (§95).
+    rng = RNG(stable_seed((name, variant), 2 ** 31) or 1)
     surf = pygame.Surface((size, size))
     surf.fill(base)
     if animated:

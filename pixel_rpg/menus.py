@@ -25,7 +25,7 @@ from .ui import (ACCENT, BAD, DIM, FAINT, GOOD, INK, PANEL_EDGE, Hotspots,
                  ScrollList, bar, draw_text, fit_stats, highlight, hp_color,
                  ellipsize, is_narrow, item_card, key_hint, list_view,
                  panel, row_height, row_text, scroll_note, scrollbar,
-                 window_start,
+                 legible, tint_screen, window_start,
                  status_chips)
 from .util import article, clamp, commafy, pulse, rng, wrap_text
 
@@ -147,9 +147,7 @@ class MenuState:
 # --------------------------------------------------------------- helpers ---
 
 def overlay(game, alpha=176):
-    layer = pygame.Surface(game.screen.get_size(), pygame.SRCALPHA)
-    layer.fill((6, 5, 10, alpha))
-    game.screen.blit(layer, (0, 0))
+    tint_screen(game.screen, (6, 5, 10), alpha)
 
 
 def frame_rect(game, inset=64):
@@ -651,9 +649,7 @@ def draw_chapter_card(game):
     # dimming with it - a bright valley snapping back is a flash.
     fade = clamp((game.CHAPTER_HOLD + game.CHAPTER_FADE - game.chapter_time)
                  / game.CHAPTER_FADE, 0, 1)
-    veil = pygame.Surface((width, height), pygame.SRCALPHA)
-    veil.fill((10, 9, 16, int(196 * fade)))
-    surface.blit(veil, (0, 0))
+    tint_screen(surface, (10, 9, 16), 196 * fade)
 
     middle = height // 2
     # "Chapter 3 of 7" is safe to say and load-bearing: the count is the
@@ -753,9 +749,10 @@ def draw_name_entry(game):
             # trap written down - and `text_y` is a *top*. The value was
             # drawn half a line higher than its own label and hung out of
             # the top of the row's highlight on every creator row (s53).
+            # In its own colour - lifted to read, never replaced (§95).
             row_text(surface, assets,
                      ellipsize(font, value, max(0, value_room)),
-                     row, "body", accent, pad=16, right=True)
+                     row, "body", legible(accent), pad=16, right=True)
         if label in CREATOR_FIELDS:
             # Arrows are always drawn and always clickable, so the mouse has
             # an obvious target rather than relying on click-to-cycle alone.
@@ -2982,10 +2979,14 @@ def draw_dialogue(game):
     # The two are split *at* the centre, not centred as a pair, so each one
     # gets half the box and not the whole of it.
     back_w = min(132, max(40, box.right - box.centerx - 24))
-    confirm_w = min(assets.font("small").size(confirm_label)[0] + 74,
+    # The `Enter  ` in front, measured, plus the padding - it was a flat 74,
+    # which is exactly that in Consolas and leaves the label touching both
+    # ends of its button in any wider face (§95).
+    extra = assets.font("small").size("Enter  ")[0] + 11
+    confirm_w = min(assets.font("small").size(confirm_label)[0] + extra,
                     max(40, box.centerx - box.x - 24))
     confirm_label = ellipsize(assets.font("small"), confirm_label,
-                              confirm_w - 74)
+                              confirm_w - extra)
     confirm_rect = pygame.Rect(box.centerx - confirm_w - 8, box.bottom - 50,
                                max(40, confirm_w), 34)
     back_rect = pygame.Rect(box.centerx + 8, box.bottom - 50, back_w, 34)
@@ -3070,7 +3071,7 @@ def draw_new_skill(game):
               FAINT)
     start, visible, row_h = list_view(list_top, rect.bottom - 78,
                                       len(carried), picked, natural=30,
-                                      minimum=22)
+                                      minimum=24)
     for offset in range(visible):
         i = start + offset
         if i >= len(carried):
@@ -3148,7 +3149,7 @@ def draw_full_bag(game):
     if pool:
         picked = max(0, min(picked, len(pool) - 1))
     start, visible, row_h = list_view(top, rect.bottom - 78, len(pool),
-                                      picked, natural=30, minimum=22)
+                                      picked, natural=30, minimum=24)
     for offset in range(visible):
         i = start + offset
         if i >= len(pool):
@@ -3295,8 +3296,11 @@ def draw_trade(game):
         list_top = top + band + 12
 
     list_bottom = rect.bottom - 92
+    # **24, not 20** (§95): at 20 the box is 16 and so is the text, which
+    # then runs from border to border of its own highlight. The list
+    # scrolls, so a squeezed window costs a row, not an item.
     start, visible, row_h = list_view(list_top, list_bottom, len(rows),
-                                      index, natural=28, minimum=20)
+                                      index, natural=28, minimum=24)
     for offset in range(visible):
         i = start + offset
         if i >= len(rows):
@@ -3871,7 +3875,13 @@ def draw_codex(game):
 
     rows = codex_rows(game)
     top = rect.y + 128
-    row_h = 44
+    # **Both lines inside the box** (§95). A fixed 44 put the preview line
+    # on the highlight's bottom border - struck through on every selected
+    # row, and past the edge in a face as tall as Consolas. The row is the
+    # two lines it holds, plus their margins, and never less than 44.
+    title_h = assets.font("body").get_height()
+    preview_y = 4 + title_h + 1
+    row_h = max(44, preview_y + assets.font("tiny").get_height() + 5 + 6)
     game.ui.codex.visible = max(3, (rect.bottom - 60 - top) // row_h)
     game.ui.codex.clamp_to(len(rows))
 
@@ -3900,7 +3910,8 @@ def draw_codex(game):
                   ellipsize(assets.font("tiny"),
                             entry.body[0] if known else "not yet discovered",
                             row.w - 28),
-                  (row.x + 14, row.y + 24), "tiny", DIM if known else FAINT)
+                  (row.x + 14, row.y + preview_y), "tiny",
+                  DIM if known else FAINT)
 
     if game.reading is not None:
         draw_codex_page(game, game.reading)
@@ -4422,10 +4433,13 @@ def draw_spoils(game):
             tone = tuple(getattr(card, "color", INK))
         draw_text(surface, assets, SPOIL_BADGE.get(kind, "Card"),
                   (cell.x + 10, cell.y + 8), "tiny", FAINT)
+        # A size down before an ellipsis (§35, §95): the name is what the
+        # card is, and "Swift Hunting Bow of the..." hid which one.
+        name = spoils_mod.card_name(kind, card)
+        size = fitting_size(assets, name, cell.w - 20)
         draw_text(surface, assets,
-                  ellipsize(assets.font("small"),
-                            spoils_mod.card_name(kind, card), cell.w - 20),
-                  (cell.centerx, cell.y + 34), "small", tone, center=True)
+                  ellipsize(assets.font(size), name, cell.w - 20),
+                  (cell.centerx, cell.y + 34), size, tone, center=True)
         # **Wrapped, not cut.** "+7% resistance for the rest of the ..."
         # is a card that has told you nothing, and the one thing this
         # screen cannot do is hide what a card does.
