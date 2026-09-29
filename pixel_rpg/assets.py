@@ -6,6 +6,7 @@ Everything the game draws is generated at runtime from the character grids in
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 
 import os
 
@@ -134,6 +135,63 @@ ANIMATED_TILES = textures.ANIMATED
 make_tile = textures.make_tile
 
 
+
+class SurfaceCache(OrderedDict):
+    """`Assets._misc`: kept surfaces, the least recently used forgotten past
+    a byte budget (s96).
+
+    **It was a plain dict, and everything in it is window-sized** - the
+    vignette, the menu gradient, a battle's two skylines and its ground -
+    keyed by the window's size. Nothing ever left. Dragging a window's
+    edge kept one of each for every size it passed through (60 steps of
+    a drag: 327 MB), and a session's battles kept four skylines for every
+    place it fought in (13 biomes: 151 MB at 1280x720, twice that at
+    1080p). A backdrop remade costs ~23ms, once, at the start of a fight.
+
+    **Never fewer than `WINDOWS` of the biggest thing in it**, so a 4K
+    window gets a budget its own screens fit in rather than one it would
+    thrash against every frame.
+    """
+
+    BUDGET = 128 * 2 ** 20
+    WINDOWS = 12
+
+    def __init__(self):
+        super().__init__()
+        self.bytes = 0
+        self.largest = 0
+
+    @staticmethod
+    def cost(value):
+        try:
+            return value.get_width() * value.get_height() * value.get_bytesize()
+        except AttributeError:
+            return 0
+
+    def limit(self):
+        return max(self.BUDGET, self.WINDOWS * self.largest)
+
+    def __getitem__(self, key):
+        value = super().__getitem__(key)
+        self.move_to_end(key)
+        return value
+
+    def __setitem__(self, key, value):
+        if key in self:
+            self.bytes -= self.cost(super().__getitem__(key))
+        super().__setitem__(key, value)
+        self.move_to_end(key)
+        size = self.cost(value)
+        self.bytes += size
+        self.largest = max(self.largest, size)
+        while self.bytes > self.limit() and len(self) > 1:
+            _key, old = self.popitem(last=False)
+            self.bytes -= self.cost(old)
+
+    def clear(self):
+        super().clear()
+        self.bytes = 0
+
 class Assets:
     """Lazily-built, cached art. One instance lives on the Game object."""
 
@@ -174,7 +232,7 @@ class Assets:
         self._sprites = {}
         self._tiles = {}
         self._text = {}
-        self._misc = {}
+        self._misc = SurfaceCache()
 
     # -- fonts -------------------------------------------------------------
 

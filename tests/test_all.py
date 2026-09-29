@@ -19268,6 +19268,53 @@ class TestDrawingRollsNothing(unittest.TestCase):
         layer.draw(surface, Assets())
         self.assertEqual(rng._r.getstate(), before)
 
+
+class TestWindowSizedLayersAreForgotten(unittest.TestCase):
+    """s96. `Assets._misc` kept every window-sized layer it ever made: a
+    60-step drag of the window's edge held 327 MB."""
+
+    def surface(self, w, h):
+        return pygame.Surface((w, h), pygame.SRCALPHA)
+
+    def test_a_dragged_window_stays_inside_the_budget(self):
+        from pixel_rpg.assets import SurfaceCache
+        cache = SurfaceCache()
+        for i in range(60):
+            size = (1280 + i * 10, 720 + i * 6)
+            cache[("vignette", size)] = self.surface(*size)
+        self.assertLessEqual(cache.bytes, cache.limit())
+        self.assertLess(len(cache), 60)
+        self.assertEqual(cache.bytes,
+                         sum(cache.cost(v) for v in dict.values(cache)))
+
+    def test_what_was_used_last_is_what_stays(self):
+        from pixel_rpg.assets import SurfaceCache
+        cache = SurfaceCache()
+        cache[("keep",)] = self.surface(1280, 720)
+        for i in range(40):
+            cache[("layer", i)] = self.surface(1280, 720)
+            cache[("keep",)]                      # used every frame
+        self.assertIn(("keep",), cache)
+        self.assertNotIn(("layer", 0), cache)
+
+    def test_a_huge_window_keeps_its_own_screens(self):
+        """Twelve of the biggest thing in it, whatever the budget - or a
+        4K window would remake its backdrop every frame."""
+        from pixel_rpg.assets import SurfaceCache
+        cache = SurfaceCache()
+        keys = [("layer", n) for n in range(4)]
+        for _ in range(5):
+            for key in keys:
+                if key not in cache:
+                    cache[key] = self.surface(3840, 2160)
+                cache[key]
+        self.assertEqual([k for k in keys if k in cache], keys)
+
+    def test_the_game_hands_its_layers_to_one(self):
+        from pixel_rpg.assets import Assets, SurfaceCache
+        _display_only()
+        self.assertIsInstance(Assets()._misc, SurfaceCache)
+
 class TestTheShrineSaysWhatItTook(unittest.TestCase):
     """s96. The prompt said 23g; the toast after it said -25."""
 
