@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 import pygame
 
 from .items import RARITY_ORDER, SHORT, STAT_KEYS
-from .util import (clamp, ease_out_back, ease_out_cubic, lerp, lerp_color,
-                   pulse, rng, shade, wrap_text)
+from .util import (clamp, ease_out_back, ease_out_cubic, fx_rng, lerp,
+                   lerp_color, pulse, rng, shade, wrap_text)
 
 INK = (238, 238, 246)
 DIM = (168, 168, 186)
@@ -544,7 +544,7 @@ class ShotLayer:
             side = angle + 1.5708
             for step in range(1, steps + 1):
                 along = step / steps
-                jitter = (rng.rfloat(-1.0, 1.0) * 7 * size
+                jitter = (fx_rng.rfloat(-1.0, 1.0) * 7 * size
                           * (1.0 if step < steps else 0.0))
                 nxt = (last[0] + math.cos(angle) * back / steps
                        + math.cos(side) * jitter,

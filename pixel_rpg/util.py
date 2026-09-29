@@ -209,6 +209,13 @@ class RNG:
 # Shared instance. `Game` reseeds this at startup from settings.
 rng = RNG()
 
+#: **How things look, never what happens** (s96): a camera shake, a
+#: flicker. The camera rolled its shake on `rng` and `draw_battle` moved
+#: the camera, so every frame drawn during a shake spent two numbers of
+#: the stream the next damage roll comes from - a fight's outcome
+#: depended on how many frames were drawn. Presentation rolls here.
+fx_rng = RNG()
+
 
 # ------------------------------------------------------------------ timer ---
 

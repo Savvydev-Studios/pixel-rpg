@@ -19156,6 +19156,118 @@ class TestTheGuideNamesYourKeys(unittest.TestCase):
             self.assertNotIn("{", page)
             self.assertNotIn("}", page)
 
+
+class TestUnspentPointsSayWhereToGo(unittest.TestCase):
+    """s96. "4 points!" said nothing about where; a hero who never opens
+    the sheet fights with none of them."""
+
+    def game(self):
+        from pixel_rpg import game as G
+        _display_only()
+        game = G.Game()
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "warden"
+        game.new_run("Spender", 6)
+        game.dialogue = None
+        game.state = G.OVERWORLD
+        self.addCleanup(game.saves.delete, 6)
+        game.player.points = 4
+        return game
+
+    def badge(self, game):
+        code = game.binds.key_for("hero")
+        return [rect for rect, kind, index in game.ui.hot.items
+                if kind == "key" and index == code
+                and rect.right > 300 and 90 < rect.top < 130]
+
+    def test_a_click_on_the_badge_opens_the_sheet(self):
+        from pixel_rpg import game as G
+        game = self.game()
+        game.ui.hot.clear()
+        game.draw()
+        found = self.badge(game)
+        self.assertEqual(len(found), 1)
+        game.mouse_click(found[0].center, 1)
+        self.assertEqual(game.state, G.CHARACTER)
+
+    def test_it_names_the_key_you_bound(self):
+        game = self.game()
+        game.binds.rebind("hero", pygame.K_h)
+        game.ui.hot.clear()
+        game.draw()
+        self.assertEqual(len(self.badge(game)), 1)
+
+    def test_under_a_menu_it_is_not_a_button(self):
+        from pixel_rpg import game as G
+        game = self.game()
+        game.go(G.INVENTORY)
+        game.ui.hot.clear()
+        game.draw()
+        self.assertEqual(self.badge(game), [])
+
+
+class TestDrawingRollsNothing(unittest.TestCase):
+    """s96. A 20,000-event fuzz run: the battle's click targets moved
+    between two draws with no input. `draw_battle` followed the camera,
+    and the camera rolled its shake on the gameplay stream."""
+
+    def battle(self):
+        from pixel_rpg import game as G
+        from pixel_rpg.entities import make_encounter
+        _display_only()
+        game = G.Game()
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "warden"
+        game.new_run("Shaker", 6)
+        game.dialogue = None
+        self.addCleanup(game.saves.delete, 6)
+        game.start_battle(make_encounter(3, "meadow", game.settings.mods,
+                                         party=1, count=3))
+        game.state = G.BATTLE
+        for _ in range(90):                 # past the intro
+            game.update(1 / 60)
+        return game
+
+    def targets(self, game):
+        game.ui.hot.clear()
+        game.draw()
+        return [(tuple(r), i) for r, k, i in game.ui.hot.items
+                if k == "battle_target"]
+
+    def test_a_shaking_battle_draws_the_same_twice_and_rolls_nothing(self):
+        from pixel_rpg.util import rng
+        game = self.battle()
+        game.camera.add_shake(20)
+        game.update(1 / 60)
+        before = rng._r.getstate()
+        first = self.targets(game)
+        second = self.targets(game)
+        self.assertTrue(first)
+        self.assertEqual(first, second)
+        self.assertEqual(rng._r.getstate(), before,
+                         "drawing spent the gameplay stream")
+
+    def test_a_battle_shake_settles_as_it_did_at_sixty(self):
+        game = self.battle()
+        game.camera.shake = 0.0
+        game.camera.add_shake(12.0)
+        game.update(1 / 60)
+        self.assertAlmostEqual(game.camera.shake, 12.0 - 84.0 / 60, places=6)
+
+    def test_lightning_flickers_without_the_stream(self):
+        from pixel_rpg.ui import ShotLayer
+        from pixel_rpg.util import rng
+        from pixel_rpg.assets import Assets
+        _display_only()
+        surface = pygame.Surface((400, 300))
+        layer = ShotLayer()
+        layer.add((20, 150), (380, 150), (200, 220, 255), look="spark")
+        layer.update(0.05)
+        before = rng._r.getstate()
+        layer.draw(surface, Assets())
+        layer.draw(surface, Assets())
+        self.assertEqual(rng._r.getstate(), before)
+
 class TestTheShrineSaysWhatItTook(unittest.TestCase):
     """s96. The prompt said 23g; the toast after it said -25."""
 

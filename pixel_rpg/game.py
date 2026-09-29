@@ -4432,8 +4432,9 @@ class Game:
             self.toast("+%d XP   +%d gold" % (xp, gold), ACCENT, 3.0)
             if levels:
                 self.sfx("levelup")
-                self.toast("Level %d - %d points to spend."
-                           % (self.player.level, self.player.points), GOOD, 5.0)
+                self.toast("Level %d - %d points to spend (%s)."
+                           % (self.player.level, self.player.points,
+                              self.binds.label_for("hero")), GOOD, 5.0)
                 for skill in new_skills:
                     # **The same question the solo path asks** (s53 item
                     # 0ac). This site was missed when that landed, so
@@ -4542,8 +4543,9 @@ class Game:
 
         if levels:
             self.sfx("levelup")
-            self.toast("Level %d - %d points to spend."
-                       % (player.level, player.points), GOOD, 5.0)
+            self.toast("Level %d - %d points to spend (%s)."
+                       % (player.level, player.points,
+                          self.binds.label_for("hero")), GOOD, 5.0)
             for skill in new_skills:
                 self.learned_skill(skill)
 
@@ -6349,11 +6351,23 @@ class Game:
         draw_text(surface, self.assets,
                   "XP %s / %s" % (commafy(player.xp), commafy(need)),
                   (176, 87), "tiny", (250, 250, 255), center=True)
-        draw_text(surface, self.assets, "%s g" % commafy(player.gold),
-                  (28, 98), "small", ACCENT)
+        purse = draw_text(surface, self.assets, "%s g" % commafy(player.gold),
+                          (28, 98), "small", ACCENT)
         if player.points:
-            draw_text(surface, self.assets, "%d points!" % player.points,
-                      (326, 104), "small", GOOD, right=True)
+            # **Where to spend them, and a click that goes there** (s96).
+            # It said "4 points!" and nothing else: a hero who never
+            # opens the sheet fights with none of them - seven rounds a
+            # fight at level 5 instead of one. The key is the binding's.
+            label = "%d points (%s)" % (player.points,
+                                        self.binds.label_for("hero"))
+            if (self.assets.font("small").size(label)[0]
+                    > 326 - purse.right - 12):
+                label = "%d points!" % player.points   # a long key name
+            spot = draw_text(surface, self.assets, label, (326, 104),
+                             "small", GOOD, right=True)
+            if self.state == OVERWORLD and not self.dialogue:
+                self.ui.hot.add(spot.inflate(8, 6), "key",
+                                self.binds.key_for("hero"))
 
         if player.statuses:
             status_chips(surface, self.assets, player.statuses, (28, 130))
@@ -6677,7 +6691,10 @@ class Game:
             self.battle.update(dt)
             self.enemy_hp_tween.set(
                 self.battle.enemy.hp / max(1, self.battle.enemy.max_hp()))
-            self.camera.follow(*self.camera_target(), dt)
+            # **Twice the island's settle** (s96): what a battle shake
+            # died at when `draw_battle` followed too, once more a frame
+            # at a fixed 1/60 - the same at 60fps, and now at any rate.
+            self.camera.follow(*self.camera_target(), dt, settle=84.0)
             # A mirror never ends its own fight. The host says when it is
             # over and what it paid; deciding that locally would be this
             # machine writing its own rewards.

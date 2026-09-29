@@ -704,9 +704,6 @@ def draw_battle(game):
     surface = game.screen
     assets = game.assets
     battle = game.battle
-    # The camera follows the body this machine is looking through; the menus
-    # belong to whoever is acting. Solo they are the same person.
-    player = battle.you
     enemy = battle.enemy
     width, height = surface.get_size()
 
@@ -722,7 +719,11 @@ def draw_battle(game):
     shake_x = shake_y = 0
     if game.settings.screen_shake:
         shake_x, shake_y = game.camera.shake_x, game.camera.shake_y
-    game.camera.follow(player.x, player.y, 1 / 60)
+    # **No `camera.follow` here** (s96). It was, with a fixed 1/60, so
+    # drawing moved the camera: two draws with nothing between them put
+    # every monster - and every click target - in a different place, and
+    # each one rolled the shake on the gameplay stream. `Game.update`
+    # follows once a frame, at the rate this used to add up to.
 
     # -- enemies -----------------------------------------------------------
     from .assets import flash_surface, tint_surface

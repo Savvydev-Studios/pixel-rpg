@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 import pygame
 
 from .entities import BOSS_DEFS, FIELD_BOSSES
-from .util import MAX_LEVEL, RNG, clamp, rng
+from .util import MAX_LEVEL, RNG, clamp, fx_rng, rng
 
 # **The valley, doubled in each direction** (s42, roadmap item 12).
 # Savvydev: *"for the map, make it huge bro, huge."* Four times the area,
@@ -235,7 +235,8 @@ class Camera:
     def add_shake(self, amount):
         self.shake = min(24.0, self.shake + amount)
 
-    def follow(self, target_x, target_y, dt, snap=False):
+    def follow(self, target_x, target_y, dt, snap=False, settle=42.0):
+        """Trail the target; `settle` is how fast a shake dies, per second."""
         world_px_w = WORLD_W * self.tile
         world_px_h = WORLD_H * self.tile
         want_x = target_x - self.view_w / 2
@@ -251,9 +252,9 @@ class Camera:
             self.y += (want_y - self.y) * factor
 
         if self.shake > 0.05:
-            self.shake = max(0.0, self.shake - dt * 42.0)
-            self.shake_x = rng.rfloat(-self.shake, self.shake)
-            self.shake_y = rng.rfloat(-self.shake, self.shake)
+            self.shake = max(0.0, self.shake - dt * settle)
+            self.shake_x = fx_rng.rfloat(-self.shake, self.shake)
+            self.shake_y = fx_rng.rfloat(-self.shake, self.shake)
         else:
             self.shake_x = self.shake_y = 0.0
 
