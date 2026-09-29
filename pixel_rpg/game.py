@@ -5863,8 +5863,10 @@ class Game:
         self.sfx("holy")
         self.particles.burst(self.player.x, self.player.y, 30,
                              (252, 240, 180), speed=150, life=0.9, gravity=-40)
-        self.toast("Fully restored." + (" (-25 gold)" if cost else ""),
-                   GOOD, 2.5)
+        # **The price it charged, not a number from before it had one**
+        # (s96). This said -25 whatever the prompt a step earlier had
+        # asked - 23g at level 1 - since the cost began to grow.
+        self.toast("Fully restored. (-%d gold)" % cost, GOOD, 2.5)
         self.save_run(silent=True, force=True)
 
     # ---------------------------------------------------------- rendering ---

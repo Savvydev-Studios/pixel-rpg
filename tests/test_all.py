@@ -19041,6 +19041,29 @@ class TestAHeldArrowRunsDownAMenu(unittest.TestCase):
         self.assertEqual(game.ui.rebinding, "interact")
 
 
+
+class TestTheShrineSaysWhatItTook(unittest.TestCase):
+    """s96. The prompt said 23g; the toast after it said -25."""
+
+    def test_the_toast_names_the_price_the_prompt_named(self):
+        from pixel_rpg import game as G
+        _display_only()
+        game = G.Game()
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "warden"
+        game.new_run("Mender", 6)
+        game.dialogue = None
+        self.addCleanup(game.saves.delete, 6)
+        game.player.hp = 1
+        game.player.gold = 100
+        cost = game.shrine_cost()
+        self.assertNotEqual(cost, 25, "pick a hero whose price is not 25")
+        game.use_shrine()
+        self.assertEqual(game.player.gold, 100 - cost)
+        self.assertEqual(game.player.hp, game.player.max_hp())
+        said = [t.text for t in game.toasts.items]
+        self.assertIn("Fully restored. (-%d gold)" % cost, said)
+
 class TestASaveGivesBackTheSameSpot(unittest.TestCase):
     """s96. The soak bot saved at y=3577.996 and loaded at 3578.0."""
 
