@@ -61,7 +61,11 @@ jobs:
       - name: Install build tools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends binutils
+          # binutils: PyInstaller reads libraries with objdump. libglib2.0-0:
+          # pygame's sound needs libgthread, and a slim image has none - the
+          # first build died at startup on exactly that (s96, 0cq). It has
+          # to be here at build time for the build to carry it inside.
+          apt-get install -y --no-install-recommends binutils libglib2.0-0
           python -m pip install -r requirements.txt "pyinstaller>=6"
       - name: Build and verify the Linux executable
         run: python tools/build_exe.py

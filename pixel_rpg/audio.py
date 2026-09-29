@@ -152,8 +152,12 @@ class Audio:
             pygame.mixer.init(SAMPLE_RATE, -16, 1, 512)
             pygame.mixer.set_num_channels(16)
             self.available = True
-        except pygame.error:
-            # No audio device. The game is fully playable in silence.
+        except (pygame.error, NotImplementedError, ImportError):
+            # No audio device - or no mixer at all: a Linux build whose
+            # system lacks a library pygame's mixer loads (`libgthread`, on
+            # a bare Debian) raises NotImplementedError on first touch, and
+            # that took the whole game down at startup (s96). Either way the
+            # game is fully playable in silence.
             self.available = False
 
     def _build(self, name):
@@ -197,10 +201,10 @@ class Audio:
         self.enabled = not self.enabled
         if self.enabled and not self.available:
             self._init_mixer()
-        elif not self.enabled:
+        elif not self.enabled and self.available:
             try:
                 pygame.mixer.stop()
-            except pygame.error:
+            except (pygame.error, NotImplementedError):
                 pass
         return self.enabled
 

@@ -20145,6 +20145,30 @@ class TestAnEndingIsReadInPeace(unittest.TestCase):
         self.assertFalse(game.toasts.items, "it never went on the records")
 
 
+class TestAMissingMixerIsSilence(unittest.TestCase):
+    """s96. The first Linux build on a bare Debian could not load pygame's
+    mixer (`libgthread-2.0.so.0` missing) and pygame answers that with
+    NotImplementedError on first touch - which nothing caught, so the game
+    died at startup instead of playing in silence."""
+
+    def test_the_game_starts_silent_without_a_mixer(self):
+        from unittest import mock
+        from pixel_rpg import audio
+
+        class Missing:
+            def __getattr__(self, name):
+                raise NotImplementedError(
+                    "mixer module not available (ImportError: "
+                    "libgthread-2.0.so.0: cannot open shared object file)")
+
+        with mock.patch.object(audio.pygame, "mixer", Missing()):
+            sound = audio.Audio(True, 0.5)
+            self.assertFalse(sound.available)
+            sound.play("select")
+            sound.toggle()                    # off
+            sound.toggle()                    # and on again
+
+
 class TestTheShrineSaysWhatItTook(unittest.TestCase):
     """s96. The prompt said 23g; the toast after it said -25."""
 

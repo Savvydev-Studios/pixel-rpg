@@ -57,6 +57,7 @@ Maintainer: Savvydev-Studios
 Section: games
 Priority: optional
 Installed-Size: {size_kb}
+Depends: libglib2.0-0
 Description: Pixel RPG
  A pixel-art role-playing game. Python, pygame and SDL are built in:
  nothing else needs installing.

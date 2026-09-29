@@ -33,7 +33,14 @@ import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD = os.path.join(ROOT, "build", "web")
-APK = os.path.join(BUILD, "pixel_rpg.apk")
+# pygbag names the apk after the *folder* it builds, whatever `--app_name`
+# says (0.9.3): `pixel_rpg.apk` on one PC, `pixel-rpg.apk` in a checkout
+# called pixel-rpg - which is every GitHub runner (s96). So it is found,
+# not assumed; the page refers to the same name.
+def _apk():
+    found = sorted(name for name in os.listdir(BUILD)
+                   if name.endswith(".apk")) if os.path.isdir(BUILD) else []
+    return os.path.join(BUILD, found[0]) if len(found) == 1 else None
 
 # Where the runtime lives, and the pieces of it the *page* asks its own
 # origin for rather than the CDN.
@@ -108,10 +115,11 @@ def _expected_modules():
 
 def _verify():
     """Open the apk and check what is actually in it. Returns True if usable."""
-    if not os.path.isfile(APK):
-        print("pygbag reported success but no apk was produced")
+    apk = _apk()
+    if apk is None:
+        print("pygbag reported success but did not produce exactly one apk")
         return False
-    with zipfile.ZipFile(APK) as archive:
+    with zipfile.ZipFile(apk) as archive:
         names = set(archive.namelist())
 
     problems = []
@@ -174,6 +182,11 @@ def main(argv):
     # build on a clean machine dies with a FileNotFoundError about its own
     # output. Cheap to prevent, confusing to hit.
     os.makedirs(BUILD, exist_ok=True)
+    # A package left by an earlier build under another name (see `_apk`)
+    # would make two, and which one the page loads would be a guess.
+    for name in os.listdir(BUILD):
+        if name.endswith(".apk"):
+            os.remove(os.path.join(BUILD, name))
 
     print("[2/3] running pygbag ...")
     command = [
