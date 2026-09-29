@@ -1,0 +1,55 @@
+# --- Secrets: never commit these -------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.json
+credentials.json
+
+# --- Save data (per-user, lives outside the repo anyway) --------------------
+saves/
+*.save
+save.json
+slot*.json
+slot*.bak
+slot*.tmp
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Editors and OS --------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Build artefacts -------------------------------------------------------
+# The shipped Pixel_RPG.exe is rebuildable from source with
+# `python tools/build_exe.py`, so it is not tracked here. It is still meant
+# to sit in the folder you hand to someone else.
+build/work/
+build_assets/*.png
+Pixel_RPG.exe
+# A build made while the game is open lands here instead (update.bat
+# swaps it in). Same 17 MB binary, same reason not to track it.
+Pixel_RPG.new.exe
+shots/
+shots_ui/
+shots_new/

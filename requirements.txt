@@ -1,0 +1,10 @@
+# Required
+pygame>=2.5,<3
+
+# Optional but recommended: loads .env into the environment.
+# Without it, config.py falls back to a small built-in KEY=VALUE parser,
+# so the game still runs - you just lose dotenv's edge-case handling.
+python-dotenv>=1.0
+
+# Optional: only used by the test suite.
+# pytest>=7.0
