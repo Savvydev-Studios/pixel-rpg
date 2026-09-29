@@ -19315,6 +19315,57 @@ class TestWindowSizedLayersAreForgotten(unittest.TestCase):
         _display_only()
         self.assertIsInstance(Assets()._misc, SurfaceCache)
 
+
+class TestAWaysideAnswersE(unittest.TestCase):
+    """s96. Thirty-two waysides on an island and not one could be reached:
+    `interactable_near` had no line for a camp, and every wayside test
+    called `stop_at_wayside` directly."""
+
+    def game(self):
+        from pixel_rpg import game as G
+        _display_only()
+        game = G.Game()
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "warden"
+        game.new_run("Stopper", 6)
+        game.dialogue = None
+        game.scene = None
+        game.state = G.OVERWORLD
+        self.addCleanup(game.saves.delete, 6)
+        return game
+
+    def test_e_beside_a_wayside_opens_it(self):
+        from pixel_rpg import game as G
+        game = self.game()
+        gx, gy = next(iter(game.world.waysides))
+        game.player.x = (gx + 1) * game.tile + game.tile / 2
+        game.player.y = gy * game.tile + game.tile / 2
+        self.assertEqual(game.world.interactable_near(gx + 1, gy),
+                         ("camp", (gx, gy)))
+        game.handle_event(pygame.event.Event(
+            pygame.KEYDOWN, key=game.binds.key_for("interact"), unicode="",
+            mod=0))
+        self.assertEqual(game.state, G.SCENE)
+        self.assertEqual(game.scene["wayside"]["spot"], (gx, gy))
+
+    def test_every_thing_the_island_says_you_can_use_answers_e(self):
+        """The class of bug, not the instance: `PROP_INTERACT` is what the
+        world calls interactive, and each kind of it that the island
+        places must be found by the scan E and the prompt both ask.
+        An opened chest is the one exception, and on purpose - the scan
+        returns its first match, and a spent chest must not stand in
+        front of the villager or the door beside it (§61)."""
+        from pixel_rpg.world import PROP_INTERACT
+        game = self.game()
+        placed = {}
+        for spot, prop in game.world.props.items():
+            if prop in PROP_INTERACT and prop != "chest_open":
+                placed.setdefault(prop, spot)
+        self.assertIn("camp", placed)
+        for prop, (gx, gy) in placed.items():
+            kind, _target = game.world.interactable_near(gx, gy)
+            self.assertIsNotNone(kind, "%s at %r answers nothing" % (prop, (gx, gy)))
+
 class TestTheShrineSaysWhatItTook(unittest.TestCase):
     """s96. The prompt said 23g; the toast after it said -25."""
 

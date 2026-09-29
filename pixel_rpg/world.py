@@ -2171,6 +2171,14 @@ class World:
                 return ("marker", (tx, ty))
             if prop == "hoard":
                 return ("hoard", (tx, ty))
+            # **A wayside was never found here** (s96). `interact` and the
+            # prompt both had a `camp` branch and `PROP_INTERACT` listed
+            # it, but this scan - the one thing both ask - had no line for
+            # it: 32 stops on an island, no prompt at any of them, and E
+            # said "Nothing to interact with here". Its tests all called
+            # `stop_at_wayside` directly, which is how it went unseen.
+            if prop == "camp" and (tx, ty) in self.waysides:
+                return ("camp", (tx, ty))
             if (tx, ty) in self.doors:
                 return ("door", ((tx, ty), self.doors[(tx, ty)]))
             if self.tile_at(tx, ty) == T_SHOP:
