@@ -19429,6 +19429,42 @@ class TestAWaysideAnswersE(unittest.TestCase):
                 self.assertTrue(reached, "seed %d: %s at %r cannot be used"
                                 % (seed, prop, (tx, ty)))
 
+
+class TestNoScreenIsADeadEnd(unittest.TestCase):
+    """s96. Put the game on every screen and press Esc, then Enter: the
+    trade screen with no trade behind it kept you there for ever."""
+
+    def test_a_trade_screen_with_no_trade_lets_you_go(self):
+        from pixel_rpg import game as G
+        _display_only()
+        game = G.Game()
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "warden"
+        game.new_run("Trader", 6)
+        game.dialogue = None
+        self.addCleanup(game.saves.delete, 6)
+        game.trade = None
+        game.state = G.TRADE
+        game.handle_event(pygame.event.Event(
+            pygame.KEYDOWN, key=pygame.K_ESCAPE, unicode="", mod=0))
+        self.assertEqual(game.state, G.OVERWORLD)
+
+    def test_closing_nothing_elsewhere_changes_nothing(self):
+        """The guard is on the trade screen only: a close with no session
+        from under somebody else's dialogue must not dismiss it."""
+        from pixel_rpg import game as G
+        _display_only()
+        game = G.Game()
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "warden"
+        game.new_run("Trader", 6)
+        self.addCleanup(game.saves.delete, 6)
+        game.trade = None
+        game.dialogue = {"title": "Someone else", "body": ["Hello."]}
+        game.state = G.DIALOGUE
+        game.close_trade()
+        self.assertEqual(game.state, G.DIALOGUE)
+
 class TestTheShrineSaysWhatItTook(unittest.TestCase):
     """s96. The prompt said 23g; the toast after it said -25."""
 

@@ -3032,6 +3032,13 @@ class Game:
     def close_trade(self, reason=""):
         session, self.trade = self.trade, None
         if session is None:
+            # **A trade screen with no trade behind it is not a screen you
+            # can be left on** (s96). Every key on it calls this, and this
+            # returned before leaving - so if the session ever went first,
+            # nothing would take you back. No known path does that today;
+            # a dead end is not worth trusting that to.
+            if self.state == TRADE:
+                self.go(OVERWORLD)
             return
         if self.coop is not None:
             self.coop.end_trade(self, reason)
