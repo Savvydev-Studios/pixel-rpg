@@ -736,7 +736,7 @@ class World:
 
         # The people who live here.
         smith_at = (forge_door[0], forge_door[1] + 1)
-        elder_at = (shop_door[0], shop_door[1] + 1)
+        elder_at = self._beside_doorstep(shop_door, cx, cy)
         self.npcs = [
             NPC(smith_at[0], smith_at[1], "smith", "Bram the Smith",
                 ("Bring me coin and steel and I will make it meaner.",
@@ -825,6 +825,53 @@ class World:
         self.grid[cy + 2][cx] = T_SHRINE
         self.props[(cx, cy + 2)] = "shrine"
         self.spawn = (cx, cy)
+
+    def _beside_doorstep(self, door, cx, cy):
+        """Where Elder Maren stands: **beside the trader's door, not on
+        its step** (s96).
+
+        She stood on it. `interactable_near` returns the first thing it
+        finds, and every tile you can open that door from reaches her
+        first - the shop's own doorway is a counter, not a floor - so on
+        every island **the trader could not be entered at all**; `E` at
+        the shop door was Maren. The smith stands on the forge's step and
+        that is fine: its doorway is a floor you can stand in, and the
+        forge door only ever leads to him.
+
+        The same rules a villager keeps (three clear of every *other*
+        door, two of the spawn, the well and the shrine), tried nearest
+        first, and each one checked the only way that counts - by asking
+        the scan, from the doorstep, whether it still finds the door. No
+        dice: the village is rebuilt from its seed (hard rule 4).
+        """
+        dx, dy = door
+        step = (dx, dy + 1)
+        spots = [(dx + 2, dy + 1), (dx - 2, dy + 1), (dx + 1, dy + 2),
+                 (dx - 1, dy + 2), (dx + 2, dy + 2), (dx - 2, dy + 2)]
+        spots += [(dx + x, dy + y) for y in range(1, 5)
+                  for x in range(-4, 5) if (dx + x, dy + y) not in spots]
+        for spot in spots:
+            vx, vy = spot
+            if spot == step or not self.in_bounds(vx, vy):
+                continue
+            if spot in self.props or spot in self.doors:
+                continue
+            if self.grid[vy][vx] not in (T_GRASS, T_PATH, T_STONE):
+                continue
+            if self.blocked(vx, vy):
+                continue
+            if any(max(abs(vx - ox), abs(vy - oy)) < 3
+                   for ox, oy in self.doors if (ox, oy) != door):
+                continue
+            if any(max(abs(vx - sx), abs(vy - sy)) < 2
+                   for sx, sy in ((cx, cy), (cx, cy - 2), (cx, cy + 2))):
+                continue
+            self.props[spot] = "elder"
+            found, target = self.interactable_near(*step)
+            del self.props[spot]
+            if found == "door" and target[0] == door:
+                return spot
+        return step         # never, on any seed the tests walk
 
     def _place_portals(self):
         """Arena gates, spaced around the valley and clear of the village.

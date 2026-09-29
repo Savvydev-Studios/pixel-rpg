@@ -11537,6 +11537,36 @@ class TestVillageVariety(unittest.TestCase):
                                 "seed %s: the door at %s cannot be opened "
                                 "from any side" % (world.seed, pos))
 
+    def test_the_trader_can_be_entered(self):
+        """**s96. On every island, it could not.** The test above holds
+        *home* doors to it and the shop was never asked: Elder Maren stood
+        on the trader's step, its doorway is a counter rather than a
+        floor, and every tile you could open it from answered her first.
+        She stands beside it now, and still answers where she stands."""
+        for world in self.worlds(seeds=range(1, 41)):
+            shop = next(pos for pos, kind in world.doors.items()
+                        if kind == "shop")
+            elder = next((n.gx, n.gy) for n in world.npcs
+                         if n.kind == "elder")
+            openable = talkable = False
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for (x, y), want in (((shop[0] + dx, shop[1] + dy), "door"),
+                                         ((elder[0] + dx, elder[1] + dy), "npc")):
+                        if not world.in_bounds(x, y) or world.blocked(x, y):
+                            continue
+                        found, target = world.interactable_near(x, y)
+                        if want == "door" and found == "door" \
+                                and target[0] == shop:
+                            openable = True
+                        if want == "npc" and found == "npc" \
+                                and (target.gx, target.gy) == elder:
+                            talkable = True
+            self.assertTrue(openable, "seed %s: the trader cannot be entered"
+                            % world.seed)
+            self.assertTrue(talkable, "seed %s: Maren cannot be spoken to"
+                            % world.seed)
+
     def test_the_village_four_all_turn_up_and_all_have_a_scene(self):
         """A villager who is in neither `VILLAGER_SCENES` nor
         `VILLAGER_LINES` **silently stops having a conversation** - which

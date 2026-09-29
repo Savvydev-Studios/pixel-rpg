@@ -78,7 +78,11 @@ from .config import DIFFICULTIES
 # rather than a per-process salted `hash()`. Two 4.40 machines now agree
 # where the rocks are; a 4.39 and a 4.40 cannot, and a guest simulated
 # around rocks it cannot see is the disagreement this number is for.
-PROTOCOL = 13
+# 14 (s96): Elder Maren stands beside the trader's door rather than on
+# its step (the trader could not be entered). A village is rebuilt from
+# its seed on every machine, so a 4.41.7 and a 4.41.8 would put her in
+# two places - and E at the shop would mean two different things.
+PROTOCOL = 14
 MAX_NAME = 18
 # A player who has said nothing for this long has gone.
 TIMEOUT = 12.0
