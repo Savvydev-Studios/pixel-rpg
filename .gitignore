@@ -50,6 +50,11 @@ Pixel_RPG.exe
 # A build made while the game is open lands here instead (update.bat
 # swaps it in). Same 17 MB binary, same reason not to track it.
 Pixel_RPG.new.exe
+# The Linux build and its Chromebook package (tools/build_exe.py and
+# tools/build_deb.py). Same reason: rebuilt from source, shipped in a
+# GitHub Release, never tracked.
+/Pixel_RPG
+pixel-rpg_*.deb
 shots/
 shots_ui/
 shots_new/

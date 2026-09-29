@@ -1,0 +1,113 @@
+# Builds the game for people who will never install Python (handoff s96, 0cq).
+#
+#   Windows          Pixel_RPG.exe - Python, pygame, SDL and the icon inside
+#   Linux / Chromebook with Linux on
+#                    pixel-rpg_<version>_amd64.deb and _arm64.deb - ChromeOS
+#                    installs these from the Files app with a double-click
+#   Any browser      the web build - the only way a Chromebook with Linux
+#                    locked by a school can play at all
+#
+# Every push builds all of them and keeps them as run artifacts. A tag
+# like v4.44.0 also publishes them as a GitHub Release, which is where a
+# player downloads from: binaries go in a release, never in the history.
+
+name: build
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install build tools
+        run: python -m pip install -r requirements.txt "pyinstaller>=6"
+      - name: Build and verify Pixel_RPG.exe
+        run: python tools/build_exe.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: Pixel_RPG.exe
+          if-no-files-found: error
+
+  linux:
+    strategy:
+      fail-fast: false
+      # ARM runners (for ARM Chromebooks) are free on a public repository
+      # only, so a private one builds Intel/AMD alone rather than queue
+      # for a machine that never comes.
+      matrix:
+        include: ${{ fromJSON(github.event.repository.private && '[{"runner":"ubuntu-24.04","arch":"amd64"}]' || '[{"runner":"ubuntu-24.04","arch":"amd64"},{"runner":"ubuntu-24.04-arm","arch":"arm64"}]') }}
+    runs-on: ${{ matrix.runner }}
+    # Built inside Debian 12, because that is what a Chromebook's Linux is:
+    # a one-file build runs on the system it was built on and anything
+    # newer, never on anything older.
+    container: python:3.11-slim-bookworm
+    env:
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends binutils
+          python -m pip install -r requirements.txt "pyinstaller>=6"
+      - name: Build and verify the Linux executable
+        run: python tools/build_exe.py
+      - name: Pack it for a Chromebook
+        run: python tools/build_deb.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: pixel-rpg_*.deb
+          if-no-files-found: error
+
+  web:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install build tools
+        run: python -m pip install -r requirements.txt "pygbag==0.9.3"
+      - name: Build the browser version
+        run: python tools/build_web.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: build/web
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, web]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Zip the browser version
+        run: cd dist/web && zip -qr ../pixel-rpg-web.zip .
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Pixel RPG $GITHUB_REF_NAME" \
+            --notes "Windows: download Pixel_RPG.exe and run it. Chromebook (Linux on): download the .deb for your Chromebook (amd64 for Intel/AMD, arm64 for ARM) and double-click it in Files. Nothing else to install." \
+            dist/windows/Pixel_RPG.exe dist/linux-*/pixel-rpg_*.deb dist/pixel-rpg-web.zip

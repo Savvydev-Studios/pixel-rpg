@@ -1,4 +1,9 @@
-"""One-command rebuild of Pixel_RPG.exe.
+"""One-command rebuild of Pixel_RPG.exe - or, on Linux, of Pixel_RPG.
+
+**The same recipe on both** (s96): `tools/Pixel_RPG.spec`, which is in the
+repository now. On Windows it makes the exe with its icon; on Linux it
+makes one executable file with Python, pygame and SDL inside it, which
+`tools/build_deb.py` then packs for a Chromebook.
 
     python tools/build_exe.py
 
@@ -49,12 +54,12 @@ def main():
     result = subprocess.run(
         [sys.executable, "-m", "PyInstaller", "--noconfirm",
          "--distpath", ".", "--workpath", os.path.join("build", "work"),
-         os.path.join("build", "Pixel_RPG.spec")], env=env)
+         os.path.join("tools", "Pixel_RPG.spec")], env=env)
     if result.returncode != 0:
         print("build failed")
         return result.returncode
 
-    exe = os.path.join(ROOT, target + ".exe")
+    exe = os.path.join(ROOT, target + (".exe" if os.name == "nt" else ""))
     if not os.path.isfile(exe):
         print("PyInstaller reported success but no exe was produced")
         return 1
@@ -64,7 +69,12 @@ def main():
     # machine can still be missing a module inside the bundle, and that
     # failure only appears as a dialog on launch - which is exactly how a
     # broken build shipped once already.
-    for step, script in ((3, "verify_exe.py"), (4, "verify_window.py")):
+    checks = [(3, "verify_exe.py")]
+    # Reading real window titles is a Win32 call (PowerShell); on Linux the
+    # self-test inside the build is the check.
+    if os.name == "nt":
+        checks.append((4, "verify_window.py"))
+    for step, script in checks:
         print("")
         print("[%d/4] %s ..." % (step, script))
         check = subprocess.run([sys.executable,
@@ -75,7 +85,7 @@ def main():
                   % script)
             return check.returncode
     print("")
-    print("%s.exe is built and verified." % target)
+    print("%s is built and verified." % os.path.basename(exe))
     if target != "Pixel_RPG":
         print("Close the game, then run update.bat to put it in place.")
     return 0

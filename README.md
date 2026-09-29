@@ -13,6 +13,7 @@ a single image or sound file in this repository.
 ## Playing it
 
 **Double-click `run.bat`** — or `Pixel_RPG.exe` directly. Nothing to install.
+The newest `Pixel_RPG.exe` is on the repository's **Releases** page.
 
 If a `Pixel_RPG.new.exe` ever appears, it is a build made while the game was
 open. Close the game and run `update.bat` to swap it in; saves are untouched.
@@ -25,31 +26,26 @@ from source.
 
 ### On a Chromebook (or any Linux)
 
-If your Chromebook lets you turn on Linux - **Settings > About ChromeOS >
-Developers > Linux development environment** - the full game runs there,
-co-op included. School-managed Chromebooks usually have this switched off
-by the school; if the button is missing or greyed out, see *In a browser*
-below instead.
+**Nothing to install but the game.** Python, pygame and SDL are built into
+it, the same as the Windows exe.
 
-1. On GitHub, open the repository, pick the branch, and use
-   **Code > Download ZIP**.
-2. In the Files app, open the ZIP (ChromeOS opens ZIPs itself) and copy
-   the folder inside it into **Linux files**.
-3. Open the **Terminal** app and type:
+1. Turn on Linux: **Settings > About ChromeOS > Developers > Linux
+   development environment**. School-managed Chromebooks usually have this
+   switched off; if the button is missing or greyed out, see *In a
+   browser* below instead.
+2. From the repository's **Releases**, download the `.deb` for your
+   Chromebook - `amd64` for Intel and AMD, `arm64` for ARM (MediaTek,
+   Snapdragon).
+3. Double-click it in the Files app and choose **Install**. Pixel RPG
+   appears in the app launcher.
 
-```bash
-cd pixel-rpg-*/
-bash run.sh
-```
+Saves live in `~/.local/share/Pixel_RPG`, so installing a newer `.deb`
+keeps every save. Any other Linux: `sudo apt install ./pixel-rpg_*.deb`.
 
-**Do not double-click `run.sh` in the Files app** - that only opens it in
-the browser as text. It has to be started from the Terminal, as above.
-No Terminal app in the launcher means Linux is not turned on yet.
-
-The first run installs what it needs (a minute or two, once); after that
-`bash run.sh` just starts the game. Saves live in
-`~/.local/share/Pixel_RPG`, not in the folder, so a newer download
-replaces the folder and keeps every save.
+**From source instead** (for working on it): download the code, copy the
+folder into **Linux files**, and in the **Terminal** run `bash run.sh` -
+the first run installs pygame into `.venv`. Double-clicking `run.sh` in
+the Files app only opens it in the browser as text.
 
 ### In a browser
 
