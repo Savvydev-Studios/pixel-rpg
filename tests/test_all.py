@@ -19875,6 +19875,183 @@ class TestAWardenTurnsTheChapter(unittest.TestCase):
         self.assertNotEqual(game.state, G.CHAPTER_CARD)
         self.assertIsNone(game.chapter_card)
 
+class TestAPayoutAsksItsQuestions(unittest.TestCase):
+    """s96, 0cm. A fight's payout opened the full-bag and new-skill
+    questions and then walked straight into `enter_overworld`, so after a
+    fight a full bag's loot was just gone and s53's new-skill question
+    never showed where skills are learned. Every test called `take_item`
+    or `learned_skill` from the overworld - the one place it worked."""
+
+    def game(self, slot=6):
+        from pixel_rpg import game as G
+        _display_only()
+        game = G.Game()
+        game.meta.save = lambda: True
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "warden"
+        game.new_run("Packrat", slot)
+        game.dialogue = None
+        game.scene = None
+        game.state = G.OVERWORLD
+        self.addCleanup(game.saves.delete, slot)
+        return game
+
+    def stuff(self, game):
+        from pixel_rpg.items import roll_item
+        while not game.player.bag_full():
+            game.player.add_item(roll_item(5))
+
+    def enter(self, game):
+        game.handle_event(pygame.event.Event(
+            pygame.KEYDOWN, key=pygame.K_RETURN, unicode="", mod=0))
+
+    def escape(self, game):
+        game.handle_event(pygame.event.Event(
+            pygame.KEYDOWN, key=pygame.K_ESCAPE, unicode="", mod=0))
+
+    def win_the_first_warden(self, game):
+        """The portal, the dialogue, the fight - up to its victory banner."""
+        import os
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))), "tools"))
+        import balance
+        from pixel_rpg import game as G
+        from pixel_rpg.battle import MENU
+        hero = game.player
+        for _ in range(3):
+            hero.gain_xp(hero.xp_to_next())
+        balance.spend_points(hero)
+        hero.hp, hero.mp = hero.max_hp(), hero.max_mp()
+        game.enter_portal(game.world.portals[0])
+        self.enter(game)
+        self.assertEqual(game.state, G.BATTLE)
+        for monster in game.battle.enemies:
+            monster.hp = 1
+        for _ in range(60 * 60):
+            fight = game.battle
+            if fight.finished:
+                return
+            if fight.phase == MENU:
+                balance.take_turn(fight, fight.actor)
+            game.update(1 / 60)
+        self.fail("the warden never fell")
+
+    def test_a_full_bag_after_a_fight_is_asked_before_the_card(self):
+        from pixel_rpg import game as G
+        from unittest import mock
+        game = self.game()
+        self.stuff(game)
+        self.win_the_first_warden(game)
+        # The fight is over; only the payout's rolls are left, and a
+        # warden drops loot 85% of the time. Make it every time.
+        with mock.patch.object(G.rng, "chance", lambda _p: True):
+            for _ in range(40):
+                if game.state != G.BATTLE:
+                    break
+                self.enter(game)
+                for _ in range(10):
+                    game.update(1 / 60)
+        self.assertEqual(game.state, G.FULLBAG,
+                         "the loot's question was walked past")
+        prize = game.ui.fullbag["item"]
+        self.escape(game)                    # leave it behind
+        self.assertNotIn(prize, game.player.inventory)
+        self.assertEqual(game.state, G.CHAPTER_CARD,
+                         "the card should follow the question")
+        self.assertIsNone(game.ui.fullbag)
+
+    def carrying_four(self, game):
+        """A Cutpurse at 11 carries four; 12 teaches a fifth (s53's
+        own set-up). Returns that fifth skill."""
+        game.player.class_key = "cutpurse"
+        while game.player.level < 11:
+            game.player.gain_xp(game.player.xp_to_next())
+        game.player.loadout = [s.key for s in
+                               game.player.known_skills()][:4]
+        self.assertEqual(len(game.player.skills()), 4)
+        _levels, fresh = game.player.gain_xp(game.player.xp_to_next())
+        self.assertTrue(fresh, "level 12 stopped unlocking anything")
+        return fresh[0]
+
+    def test_questions_wait_for_the_payout_and_come_in_order(self):
+        from pixel_rpg import game as G
+        from pixel_rpg.items import roll_item
+        game = self.game()
+        self.stuff(game)
+        fifth = self.carrying_four(game)
+        after = []
+        with game.questions_held():
+            game.learned_skill(fifth)
+            game.take_item(roll_item(9))
+            game.take_item(roll_item(9))
+            self.assertEqual(game.state, G.OVERWORLD,
+                             "a question opened in the middle of a payout")
+        game.after_questions = lambda: after.append("then")
+        game.next_question()
+        self.assertEqual(game.state, G.NEWSKILL)
+        self.escape(game)
+        self.assertEqual(game.state, G.FULLBAG)
+        self.escape(game)
+        self.assertEqual(game.state, G.FULLBAG,
+                         "the second item's question was lost")
+        self.escape(game)
+        self.assertEqual(after, ["then"])
+        self.assertEqual(game.questions, [])
+
+    def test_a_question_outside_a_payout_opens_at_once(self):
+        """A chest, a trade: unchanged - the screen is up straight away."""
+        from pixel_rpg import game as G
+        from pixel_rpg.items import roll_item
+        game = self.game()
+        self.stuff(game)
+        self.assertFalse(game.take_item(roll_item(9)))
+        self.assertEqual(game.state, G.FULLBAG)
+
+    def test_a_wave_asks_before_the_intermission(self):
+        from pixel_rpg import game as G, gamemodes
+        from unittest import mock
+        _display_only()
+        game = G.Game()
+        game.meta.save = lambda: True
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "cutpurse"
+        game.new_wave_run("Stander")
+        fresh = self.carrying_four(game)
+        with mock.patch.object(gamemodes, "grant_wave_rewards",
+                               lambda *a, **k: (1, [fresh], True)):
+            game.wave_cleared([])
+        self.assertEqual(game.state, G.NEWSKILL,
+                         "the intermission overwrote the question")
+        self.escape(game)
+        self.assertIn(game.state, (G.WAVES, G.SPOILS))
+
+    def test_a_fight_over_an_open_question_keeps_it(self):
+        """Only a room does this - a warden opened with everybody in it."""
+        from pixel_rpg import game as G
+        from pixel_rpg.entities import make_encounter
+        from pixel_rpg.items import roll_item
+        game = self.game()
+        self.stuff(game)
+        prize = roll_item(9)
+        game.take_item(prize)
+        self.assertEqual(game.state, G.FULLBAG)
+        game.start_battle(make_encounter(1, "meadow", game.settings.mods))
+        self.assertEqual(game.state, G.BATTLE)
+        self.assertEqual(game.questions, [(G.FULLBAG, {"item": prize,
+                                                        "source": ""})])
+
+    def test_leaving_a_room_takes_its_questions_with_it(self):
+        from pixel_rpg.items import roll_item
+        game = self.game()
+        self.stuff(game)
+        game.take_item(roll_item(9))
+        game.questions.append(("fullbag", {"item": roll_item(9)}))
+        game.clear_run()
+        self.assertEqual(game.questions, [])
+        self.assertIsNone(game.ui.fullbag)
+
+
 class TestTheShrineSaysWhatItTook(unittest.TestCase):
     """s96. The prompt said 23g; the toast after it said -25."""
 

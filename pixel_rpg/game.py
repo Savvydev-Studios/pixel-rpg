@@ -1,6 +1,7 @@
 """The Game object: window, main loop, shared state and the overworld."""
 from __future__ import annotations
 
+import contextlib
 import math
 import sys
 import time
@@ -335,6 +336,12 @@ class Game:
         #: What runs when the chapter card closes - the warden's last words,
         #: queued behind the card that announces their death (s96).
         self.after_card = None
+        #: Questions a payout raised - a full bag, a fifth skill - waiting
+        #: their turn, whether a payout is still handing things out, and
+        #: what it does once they are all answered (s96, 0cm).
+        self.questions = []
+        self.holding_questions = False
+        self.after_questions = None
 
     def _set_window_icon(self):
         """Draw the taskbar icon from the same sprite the .ico is built from.
@@ -1356,8 +1363,9 @@ class Game:
                 ["potion", "hipotion", "ether", "antidote"]))
         if levels:
             self.sfx("levelup")
-            for skill in new_skills:
-                self.learned_skill(skill)
+            with self.questions_held():
+                for skill in new_skills:
+                    self.learned_skill(skill)
         if reward["heal"]:
             # *"every 10 waves or something heals everyone"* - everyone,
             # so in a room this is announced rather than only felt. Each
@@ -1375,6 +1383,12 @@ class Game:
         # (s83). Dropped here rather than when the next one starts, so
         # the intermission shows what you are actually carrying.
         spoils_mod.expire(self.player, self.waves.cleared)
+        # A fifth skill is asked about first (0cm) - it was set up here
+        # and then overwritten by the intermission on the next line.
+        self.after_questions = self.back_to_the_intermission
+        self.next_question()
+
+    def back_to_the_intermission(self):
         self.state = WAVES
         self.ui.reset()
         # **And then the choice** (item 0bs). After the payout, because
@@ -2694,11 +2708,98 @@ class Game:
             self.toast("Found %s" % item.name, item.color, 4.5)
             self.sfx("item")
             return True
-        self.ui.fullbag = {"item": item, "source": source}
-        self.ui.fullbag_index = 0
-        self.go(FULLBAG)
-        self.sfx("error")
+        self.ask(FULLBAG, {"item": item, "source": source})
         return False
+
+    # ------------------------------------------------ questions, in turn ---
+
+    def ask(self, kind, payload):
+        """Put a question to the player - now, or behind the one on screen.
+
+        **A payout used to open its questions and walk straight past them**
+        (s96, 0cm). `take_item` and `learned_skill` put their screen up and
+        the fight's payout carried on into `enter_overworld`, so after a
+        fight a full bag's loot was neither kept nor thrown away - just
+        gone - and s53's new-skill question (0ac, his, from the third
+        school playtest) never appeared where skills are learned. Two in
+        one payout overwrote each other. Every test called the handler
+        directly, from the overworld, which is the one place it worked.
+        """
+        self.questions.append((kind, payload))
+        if self.holding_questions or self.state in (FULLBAG, NEWSKILL):
+            return
+        self.next_question()
+
+    @contextlib.contextmanager
+    def questions_held(self):
+        """While a payout hands things out, its questions wait for it."""
+        was, self.holding_questions = self.holding_questions, True
+        try:
+            yield
+        finally:
+            self.holding_questions = was
+
+    def next_question(self):
+        """Show the next question - or, once none is left, carry on.
+
+        Each is looked at again when its turn comes, because an earlier
+        answer can change it: a hand freed up, or room made in the bag.
+        """
+        from .entities import LOADOUT_SIZE
+        while self.questions and self.player is not None:
+            kind, payload = self.questions.pop(0)
+            if kind == NEWSKILL:
+                skill = payload["skill"]
+                carried = [s.key for s in self.player.skills()]
+                if skill.key in carried:
+                    continue
+                if len(carried) < LOADOUT_SIZE:
+                    self.player.equip_skill(skill.key)
+                    self.toast("Learned %s - equipped." % skill.name,
+                               (192, 118, 250), 5.0)
+                    continue
+                self.ui.newskill = {"skill": skill, "carried": carried}
+                self.ui.newskill_index = 0
+                self.go(NEWSKILL)
+                self.sfx("levelup")
+                return True
+            item = payload["item"]
+            if self.player.add_item(item):
+                self.toast("Found %s" % item.name, item.color, 4.5)
+                self.sfx("item")
+                continue
+            self.ui.fullbag = payload
+            self.ui.fullbag_index = 0
+            self.go(FULLBAG)
+            self.sfx("error")
+            return True
+        self.questions = []
+        then, self.after_questions = self.after_questions, None
+        if then is not None:
+            then()
+        return False
+
+    def put_back_the_question(self):
+        """A fight that starts over an open question keeps it for after.
+
+        Only a room can do that - a host opening a warden with everybody
+        in it - and the question is the guest's to answer, not to lose.
+        """
+        if self.state == FULLBAG and self.ui.fullbag:
+            self.questions.insert(0, (FULLBAG, self.ui.fullbag))
+        elif self.state == NEWSKILL and self.ui.newskill:
+            self.questions.insert(0, (NEWSKILL,
+                                      {"skill": self.ui.newskill["skill"]}))
+        self.ui.fullbag = None
+        self.ui.newskill = None
+
+    def forget_the_questions(self):
+        """Nothing asked in one run is answered in another."""
+        self.questions = []
+        self.after_questions = None
+        self.holding_questions = False
+        self.ui.fullbag = None
+        self.ui.newskill = None
 
     def droppable(self):
         """What the full-bag question may offer to throw away.
@@ -2719,6 +2820,10 @@ class Game:
         item = state.get("item")
         self.ui.fullbag = None
         self.go(BATTLE if self.battle is not None else OVERWORLD)
+        self.settle_full_bag(item, keep)
+        self.next_question()
+
+    def settle_full_bag(self, item, keep):
         if item is None:
             return
         if keep is None:
@@ -2780,10 +2885,7 @@ class Game:
             self.toast("Learned %s - equipped." % skill.name,
                        (192, 118, 250), 5.0)
             return
-        self.ui.newskill = {"skill": skill, "carried": carried}
-        self.ui.newskill_index = 0
-        self.go(NEWSKILL)
-        self.sfx("levelup")
+        self.ask(NEWSKILL, {"skill": skill})
 
     def resolve_new_skill(self, replace):
         """`replace` is which carried skill to put down, or None to keep
@@ -2793,6 +2895,10 @@ class Game:
         carried = list(state.get("carried", ()))
         self.ui.newskill = None
         self.go(BATTLE if self.battle is not None else OVERWORLD)
+        self.settle_new_skill(skill, carried, replace)
+        self.next_question()
+
+    def settle_new_skill(self, skill, carried, replace):
         if skill is None:
             return
         if replace is None or not (0 <= replace < len(carried)):
@@ -3398,6 +3504,7 @@ class Game:
         self.after_card = None
         self.pending_epitaph = None
         self.pending_ending = False
+        self.forget_the_questions()
         slot, self.pre_coop_slot = self.pre_coop_slot, None
         if resume_own_run and slot is not None and self.load_run(slot):
             return
@@ -3864,6 +3971,8 @@ class Game:
         """
         self.particles.clear()
         self.floats.items.clear()
+        if self.state in (FULLBAG, NEWSKILL):
+            self.put_back_the_question()
         if self.open_combat() and not mirror:
             # **Item 0bi.** His words: *"free-roam is available in all
             # modes, and free-roam combat as well"* - so the real-time
@@ -4503,50 +4612,56 @@ class Game:
             return
 
         if result == "victory":
-            cut = sec.safe_dict(sec.safe_dict(payload.get("sh")).get(key))
-            xp = sec.safe_int(cut.get("xp"), 0, 10 ** 7, 0)
-            gold = sec.safe_int(cut.get("gold"), 0, 10 ** 7, 0)
-            enemies = list(battle.enemies) if battle else []
-            for enemy in enemies:
-                self.player.stats_tracker[
-                    "bosses" if isinstance(enemy, Boss) else "kills"] += 1
-            self.player.gold += gold
-            self.player.stats_tracker["gold_earned"] += gold
-            levels, new_skills = self.player.gain_xp(xp)
-            self.toast("+%d XP   +%d gold" % (xp, gold), ACCENT, 3.0)
-            if levels:
-                self.sfx("levelup")
-                self.toast("Level %d - %d points to spend (%s)."
-                           % (self.player.level, self.player.points,
-                              self.binds.label_for("hero")), GOOD, 5.0)
-                for skill in new_skills:
-                    # **The same question the solo path asks** (s53 item
-                    # 0ac). This site was missed when that landed, so
-                    # levelling in a shared fight still raised the toast
-                    # nobody sees. Two payout paths, one behaviour.
-                    self.learned_skill(skill)
-            for entry in sec.safe_list(
-                    sec.safe_dict(payload.get("lt")).get(key), 8):
-                item = Item.from_dict(entry)
-                if item is None:
-                    continue
-                self.take_item(item)
-            # **A warden a room fells is felled for each of them** (s96).
-            # This path never called it, so after an assembled fight
-            # (§81) nobody's portal was marked, nobody got the Memory and
-            # the next road stayed sealed - and in a room a warden cannot
-            # be fought alone, so co-op never got past the first one.
-            # Each machine records its own kill, as §20 says a warden
-            # kill is recorded: per player, never shared.
-            for enemy in enemies:
-                if isinstance(enemy, Boss):
-                    self.on_boss_defeated(enemy)
-            self.after_battle_checks()
-            self.after_the_fight()
+            with self.questions_held():
+                self.pay_shared_victory(payload, key, battle)
+            self.after_questions = self.after_the_fight
+            self.next_question()
             self.publish_body()
             return
         self.enter_overworld()
         self.publish_body()
+
+    def pay_shared_victory(self, payload, key, battle):
+        """This player's row of a won shared fight (see the caller)."""
+        cut = sec.safe_dict(sec.safe_dict(payload.get("sh")).get(key))
+        xp = sec.safe_int(cut.get("xp"), 0, 10 ** 7, 0)
+        gold = sec.safe_int(cut.get("gold"), 0, 10 ** 7, 0)
+        enemies = list(battle.enemies) if battle else []
+        for enemy in enemies:
+            self.player.stats_tracker[
+                "bosses" if isinstance(enemy, Boss) else "kills"] += 1
+        self.player.gold += gold
+        self.player.stats_tracker["gold_earned"] += gold
+        levels, new_skills = self.player.gain_xp(xp)
+        self.toast("+%d XP   +%d gold" % (xp, gold), ACCENT, 3.0)
+        if levels:
+            self.sfx("levelup")
+            self.toast("Level %d - %d points to spend (%s)."
+                       % (self.player.level, self.player.points,
+                          self.binds.label_for("hero")), GOOD, 5.0)
+            for skill in new_skills:
+                # **The same question the solo path asks** (s53 item
+                # 0ac). This site was missed when that landed, so
+                # levelling in a shared fight still raised the toast
+                # nobody sees. Two payout paths, one behaviour.
+                self.learned_skill(skill)
+        for entry in sec.safe_list(
+                sec.safe_dict(payload.get("lt")).get(key), 8):
+            item = Item.from_dict(entry)
+            if item is None:
+                continue
+            self.take_item(item)
+        # **A warden a room fells is felled for each of them** (s96).
+        # This path never called it, so after an assembled fight
+        # (§81) nobody's portal was marked, nobody got the Memory and
+        # the next road stayed sealed - and in a room a warden cannot
+        # be fought alone, so co-op never got past the first one.
+        # Each machine records its own kill, as §20 says a warden
+        # kill is recorded: per player, never shared.
+        for enemy in enemies:
+            if isinstance(enemy, Boss):
+                self.on_boss_defeated(enemy)
+        self.after_battle_checks()
 
     def finish_battle(self):
         if self.in_shared_battle() and self.coop.role == coop_mod.HOST:
@@ -4601,8 +4716,12 @@ class Game:
             # The local player's cut, not the whole pot. Solo those are the
             # same number, because a party of one splits everything with
             # itself.
-            self.grant_victory_rewards(enemies, battle.reward_for(player))
-        self.after_the_fight()
+            with self.questions_held():
+                self.grant_victory_rewards(enemies,
+                                           battle.reward_for(player))
+        # **Its questions first, then the card and the last words** (0cm).
+        self.after_questions = self.after_the_fight
+        self.next_question()
 
     def after_the_fight(self):
         """What a won fight leaves on screen, in order: **the chapter card
@@ -7048,6 +7167,7 @@ class Game:
         # A wave run is a run: leaving one leaves no wave state behind
         # for the next mode to trip over (0ag, s59).
         self.forget_the_mode()
+        self.forget_the_questions()
         self.pending_mode = gamemodes.DEFAULT_MODE
         self.guest_world = None
         self.guest_pending = None
