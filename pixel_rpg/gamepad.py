@@ -291,9 +291,18 @@ class Gamepad:
             remaining -= dt
             if remaining <= 0:
                 self._repeat[code] = REPEAT_NEXT
-                self._press(game, code)
+                # A key being rebound takes the next key it hears, and a
+                # repeat is not one anybody chose - it cancelled the
+                # rebind with "Down is needed by the menus" (s96).
+                if not self._rebinding(game):
+                    self._press(game, code)
             else:
                 self._repeat[code] = remaining
+
+    @staticmethod
+    def _rebinding(game):
+        ui = getattr(game, "ui", None)
+        return getattr(ui, "rebinding", None) is not None
 
     def wrap_keys(self, real):
         """The keyboard state the overworld should read."""

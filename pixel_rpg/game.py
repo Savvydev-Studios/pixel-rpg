@@ -106,6 +106,9 @@ STORY = "story"
 CHAPTER_CARD = "chaptercard"
 WORLDMAP = "worldmap"
 
+#: The keys `repeat_held_arrows` repeats while held on a menu.
+HELD_ARROWS = (pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT)
+
 # **The smallest the desktop window may get.** Asked for by Savvydev on
 # 2026-08-29 - *"why dont you limit how small the window can be?"* - and
 # the honest answer was that it was already half-done: the resize handler
@@ -176,6 +179,11 @@ class Game:
         self.log = Logbook()
         self.log.info("session started")
         self.konami = devmenu_mod.SequenceWatcher()
+        #: Arrow keys held on a menu, and how long until each repeats -
+        #: see `repeat_held_arrows`. Only ever the state they were
+        #: pressed in; a change of screen empties it.
+        self.key_repeat = {}
+        self.key_repeat_state = None
 
         # The opening card. Skippable with any key or click - an opening
         # you cannot get past is one people learn to resent by the third
@@ -267,6 +275,8 @@ class Game:
         #: s71). `walk_anim` is the clock; this is the blend, and without
         #: it letting go of a key cut the bob to nothing mid-stride.
         self.walk_ease = 0.0
+        # Fractions of a step not yet counted - see `move_player`.
+        self.step_carry = 0.0
         #: How many fights have started this session. Only ever read
         #: modulo the variant count (item 0bd); nothing depends on the
         #: absolute number, and it is deliberately not saved.
@@ -2178,7 +2188,15 @@ class Game:
                 else ("back" if dy < 0 else "front")
             self.walk_anim += dt * (8.0 if speed > self.tile * 5 else 6.0)
             self._try_move(dx * speed * dt, dy * speed * dt)
-            self.player.stats_tracker["steps"] += 1
+            # **A step is a sixtieth of a second of walking, not a frame**
+            # (§95). Counted per frame, "Walk 900 steps" took fifteen
+            # seconds at 60fps, twenty-two at 40 and six at 144 - an
+            # errand that ran at the speed of the computer. At the default
+            # 60 this counts exactly what it always did.
+            self.step_carry += dt * 60.0
+            whole = int(self.step_carry)
+            self.step_carry -= whole
+            self.player.stats_tracker["steps"] += whole
             self.sfx("step", volume=0.35, throttle=0.28)
         # **The clock keeps running while the blend falls away.** Zeroing
         # `walk_anim` here is what made stopping a cut rather than a
@@ -2190,20 +2208,38 @@ class Game:
         self.walk_running = speed > self.tile * 5
 
     def _try_move(self, dx, dy):
-        """Axis-separated movement so sliding along a wall feels right."""
-        rect = self.player_rect()
+        """Axis-separated movement so sliding along a wall feels right.
+
+        **The move that is tested is the move that is made** (§95). This
+        probed the box shifted by the *rounded* step - two pixels - and
+        then moved by the real one, two and a half at 60fps; the extra
+        half could carry the box a pixel into a wall. From there its
+        corner was in the wall's row, the sideways probe hit the wall too,
+        and walking diagonally along a house stopped dead about one
+        approach in thirty. A blocked step now closes the gap a pixel at a
+        time instead, so a wall is touched, never entered and never
+        stopped short of.
+        """
+        # Somebody already inside a wall - an old save, a spawn that went
+        # wrong - is let out rather than frozen there: every step would
+        # test as blocked, and a player who cannot move cannot fix it.
+        trapped = self._collides(self.player_rect())
         for axis, delta in (("x", dx), ("y", dy)):
             if not delta:
                 continue
-            probe = rect.copy()
-            probe.x += int(round(delta)) if axis == "x" else 0
-            probe.y += int(round(delta)) if axis == "y" else 0
-            if not self._collides(probe):
-                if axis == "x":
-                    self.player.x += delta
-                else:
-                    self.player.y += delta
-                rect = self.player_rect()
+            start = getattr(self.player, axis)
+            setattr(self.player, axis, start + delta)
+            if trapped or not self._collides(self.player_rect()):
+                continue
+            setattr(self.player, axis, start)
+            step = 1.0 if delta > 0 else -1.0
+            moved = 0.0
+            while abs(moved + step) <= abs(delta):
+                setattr(self.player, axis, start + moved + step)
+                if self._collides(self.player_rect()):
+                    setattr(self.player, axis, start + moved)
+                    break
+                moved += step
 
     def _collides(self, rect):
         for px, py in ((rect.left, rect.top), (rect.right - 1, rect.top),
@@ -6610,6 +6646,7 @@ class Game:
         self.xp_tween.update(dt)
         self.enemy_hp_tween.update(dt)
         self.pad.update(dt, self)
+        self.repeat_held_arrows(dt)
         self.touch.update(dt, self)
         self.update_coop(dt)
 
@@ -6645,6 +6682,57 @@ class Game:
             if (self.battle.finished and self.battle.banner_timer <= 0
                     and not self.battle.mirror):
                 self.finish_battle()
+
+    def repeat_held_arrows(self, dt):
+        """A held arrow on a menu keeps moving the cursor (s96).
+
+        It moved one row per press, so a forty-row list was forty presses
+        from a keyboard while a pad, holding the same direction, ran down
+        it (section 14). Same timing as the pad: a pause, then a stream.
+
+        **Arrows only, never Enter.** An operating-system repeat on every
+        key would let a held Enter buy a shop out. And only where an
+        arrow is a *press*:
+
+        - walking polls the arrows as held keys already, and a repeat
+          there would be a second, stuttering walk on top of the first;
+        - settings is deaf to real arrows so the konami code can be typed
+          on it (`menus.KONAMI_KEYS`);
+        - a key being rebound takes the next key it hears as the binding,
+          and a repeat is not a key anybody chose.
+
+        A repeat carries `repeat=True`, which the konami watcher skips: a
+        held Up is one Up, the way the sequence means it.
+        """
+        if not self.key_repeat:
+            return
+        if (self.state != self.key_repeat_state
+                or not self.arrows_repeat_here()):
+            self.key_repeat.clear()
+            return
+        held = pygame.key.get_pressed()
+        for code in list(self.key_repeat):
+            if not held[code]:
+                del self.key_repeat[code]
+                continue
+            remaining = self.key_repeat[code] - dt
+            if remaining > 0:
+                self.key_repeat[code] = remaining
+                continue
+            self.key_repeat[code] = gamepad_mod.REPEAT_NEXT
+            self.handle_event(pygame.event.Event(
+                pygame.KEYDOWN, key=code, unicode="", mod=0, repeat=True))
+            if self.state != self.key_repeat_state:
+                self.key_repeat.clear()
+                return
+
+    def arrows_repeat_here(self):
+        """Whether a held arrow is a stream of presses on this screen."""
+        if self.state in (SPLASH, CHAPTER_CARD, ROAM, SETTINGS_SCREEN):
+            return False
+        if self.state == OVERWORLD and not self.dialogue:
+            return False
+        return not (self.state == KEYBINDS and self.ui.rebinding is not None)
 
     # -------------------------------------------------------------- events ---
 
@@ -6687,6 +6775,10 @@ class Game:
             return
         if event.type != pygame.KEYDOWN:
             return
+        if (event.key in HELD_ARROWS and not getattr(event, "synthetic", False)
+                and not getattr(event, "repeat", False)):
+            self.key_repeat[event.key] = gamepad_mod.REPEAT_FIRST
+            self.key_repeat_state = self.state
         if self.skip_splash() or self.skip_chapter_card():
             return
         if event.key == pygame.K_F11:
@@ -6702,6 +6794,7 @@ class Game:
         # Overworld and pause are kept because that is where it has always
         # worked and somebody may know it; they still act on the way in.
         if (self.player and self.state in (OVERWORLD, PAUSE, SETTINGS_SCREEN)
+                and not getattr(event, "repeat", False)
                 and self.konami.feed(event.key)):
             self.ask_open_devmenu()
             return

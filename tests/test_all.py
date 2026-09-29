@@ -1144,6 +1144,20 @@ class TestEncounterScaling(unittest.TestCase):
         self.assertGreater(max(m.level for m in crowd),
                            max(m.level for m in alone))
 
+    def test_a_level_one_pack_is_not_a_level_harder(self):
+        """s96. Every pack rolls its level plus or minus one; at level 1
+        the floor slid the window up and rolled 1-3."""
+        from pixel_rpg.util import rng
+        for level in (1, 2, 5, 12):
+            seen = set()
+            for seed in range(200):
+                rng.reseed(seed)
+                pack = self.entities.make_encounter(level, "meadow",
+                                                    party=1, count=3)
+                seen.update(m.level for m in pack)
+            self.assertEqual(seen, set(range(max(1, level - 1), level + 2)),
+                             level)
+
     def test_a_boss_can_still_be_fought_alone(self):
         """The six warden fights are tuned one-on-one and must stay
         reachable that way."""
@@ -18818,6 +18832,76 @@ class TestTheNightBeforeThePlaytest(unittest.TestCase):
         self.assertEqual(seen[0], seen[1])
         self.assertTrue(seen[0].strip())
 
+    def field_with_a_wall(self):
+        from pixel_rpg.world import T_GRASS, T_WALL
+        game = self.game()
+        for y in range(40, 60):
+            for x in range(40, 120):
+                game.world.grid[y][x] = T_WALL if y == 50 else T_GRASS
+                game.world.props.pop((x, y), None)
+        return game
+
+    def test_walking_along_a_wall_slides_and_never_enters_it(self):
+        """The probe was the rounded step and the move was the real one,
+        so the box could end a pixel inside a wall - and from there a
+        diagonal walk along it stopped dead, about one approach in
+        thirty. Every frame rate, every sub-pixel start."""
+        game = self.field_with_a_wall()
+
+        class Held:
+            def __init__(self, keys):
+                self.keys = keys
+
+            def __getitem__(self, code):
+                return code in self.keys
+
+        keys = Held({pygame.K_UP, pygame.K_RIGHT})
+        for fps in (30, 60, 144):
+            for eighth in range(0, 32, 3):
+                game.player.x = 60 * 32 + 16
+                game.player.y = 51 * 32 + 14 + eighth / 8.0
+                start = game.player.x
+                for _ in range(int(fps * 1.5)):
+                    game.move_player(1.0 / fps, keys)
+                    self.assertFalse(game._collides(game.player_rect()),
+                                     (fps, eighth))
+                self.assertGreater(game.player.x - start, 50, (fps, eighth))
+                self.assertEqual(game.player_rect().top, 51 * 32,
+                                 "it should end touching the wall")
+
+    def test_somebody_inside_a_wall_can_walk_out(self):
+        game = self.field_with_a_wall()
+        game.player.x, game.player.y = 60 * 32 + 16, 50 * 32 + 16
+
+        class Down:
+            def __getitem__(self, code):
+                return code == pygame.K_DOWN
+
+        for _ in range(60):
+            game.move_player(1 / 60, Down())
+        self.assertFalse(game._collides(game.player_rect()))
+
+    def test_a_step_is_a_sixtieth_of_a_second_at_any_frame_rate(self):
+        """Counted per frame, "Walk 900 steps" ran at the speed of the
+        computer. At 60fps it counts exactly what it always did."""
+        game = self.field_with_a_wall()
+
+        class Right:
+            def __getitem__(self, code):
+                return code == pygame.K_RIGHT
+
+        counts = {}
+        for fps in (30, 60, 144):
+            game.player.x, game.player.y = 45 * 32, 55 * 32
+            game.step_carry = 0.0
+            before = game.player.stats_tracker["steps"]
+            for _ in range(fps):                       # one second
+                game.move_player(1.0 / fps, Right())
+            counts[fps] = game.player.stats_tracker["steps"] - before
+        self.assertEqual(counts[60], 60)
+        for fps, count in counts.items():
+            self.assertLessEqual(abs(count - 60), 1, counts)
+
     def test_a_codex_row_holds_both_of_its_lines(self):
         from pixel_rpg.assets import Assets
         _display_only()
@@ -18828,6 +18912,153 @@ class TestTheNightBeforeThePlaytest(unittest.TestCase):
         box_h = row_h - 6
         self.assertLessEqual(preview_y + assets.font("tiny").get_height(),
                              box_h - 2, "the preview sits on the border")
+
+
+class TestAHeldArrowRunsDownAMenu(unittest.TestCase):
+    """s96. Held on a menu, an arrow repeats - the way a pad's already did.
+
+    A forty-row list was forty presses from a keyboard. Arrows only, only
+    where an arrow is a press, and never into a key being rebound.
+    """
+
+    class Held:
+        def __init__(self, *keys):
+            self.keys = set(keys)
+
+        def __getitem__(self, code):
+            return code in self.keys
+
+    def game(self):
+        from pixel_rpg import game as G
+        _display_only()
+        game = G.Game()
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "warden"
+        game.new_run("Holder", 6)
+        game.dialogue = None
+        self.addCleanup(game.saves.delete, 6)
+        return game
+
+    def repeats(self, game, key, seconds, state=None):
+        """Press `key`, hold it for `seconds`; the repeats that came of it."""
+        from unittest import mock
+        heard = []
+        real = game.handle_event
+
+        def spy(event):
+            if getattr(event, "repeat", False):
+                heard.append(event.key)
+            real(event)
+
+        game.handle_event = spy
+        held = self.Held(key)
+        with mock.patch("pygame.key.get_pressed", return_value=held):
+            real(pygame.event.Event(pygame.KEYDOWN, key=key, unicode="",
+                                    mod=0))
+            for _ in range(int(round(seconds * 60))):
+                game.update(1 / 60)
+        return heard
+
+    def test_down_held_on_pause_waits_then_streams(self):
+        game = self.game()
+        game.state = "pause"
+        self.assertEqual(self.repeats(game, pygame.K_DOWN, 0.4), [])
+        game.key_repeat.clear()
+        heard = self.repeats(game, pygame.K_DOWN, 1.0)
+        # 0.42 before the first, then one every 0.14 - at 60 frames a
+        # second that lands on frames 26, 35, 44 and 53
+        self.assertEqual(len(heard), 4, heard)
+        self.assertEqual(set(heard), {pygame.K_DOWN})
+
+    def test_letting_go_stops_it(self):
+        from unittest import mock
+        game = self.game()
+        game.state = "pause"
+        self.repeats(game, pygame.K_DOWN, 0.2)
+        with mock.patch("pygame.key.get_pressed", return_value=self.Held()):
+            game.update(1 / 60)
+        self.assertEqual(game.key_repeat, {})
+
+    def test_enter_never_repeats(self):
+        game = self.game()
+        game.state = "pause"
+        self.assertEqual(self.repeats(game, pygame.K_RETURN, 1.0), [])
+
+    def test_walking_is_not_repeated(self):
+        game = self.game()
+        game.state = "overworld"
+        self.assertEqual(self.repeats(game, pygame.K_DOWN, 1.0), [])
+
+    def test_settings_stay_deaf_for_the_code(self):
+        game = self.game()
+        game.state = "settings"
+        self.assertEqual(self.repeats(game, pygame.K_DOWN, 1.0), [])
+
+    def test_a_held_up_is_one_up_to_the_code(self):
+        game = self.game()
+        game.state = "pause"
+        game.konami.progress = 0
+        # one repeat: fed to the watcher it would read as the code's
+        # second Up (an odd number of them lands back on 1 by chance)
+        heard = self.repeats(game, pygame.K_UP, 0.5)
+        self.assertEqual(len(heard), 1)
+        self.assertEqual(game.konami.progress, 1)
+
+    def test_a_key_being_rebound_hears_no_repeat(self):
+        from unittest import mock
+        game = self.game()
+        game.state = "keybinds"
+        self.repeats(game, pygame.K_DOWN, 0.2)          # walking the list
+        game.ui.rebinding = "interact"                  # then Enter on a row
+        with mock.patch("pygame.key.get_pressed",
+                        return_value=self.Held(pygame.K_DOWN)):
+            for _ in range(60):
+                game.update(1 / 60)
+        self.assertEqual(game.ui.rebinding, "interact")
+
+    def test_a_new_screen_forgets_the_held_key(self):
+        from unittest import mock
+        game = self.game()
+        game.state = "pause"
+        self.repeats(game, pygame.K_DOWN, 0.2)
+        self.assertIn(pygame.K_DOWN, game.key_repeat)
+        game.state = "quests"
+        with mock.patch("pygame.key.get_pressed",
+                        return_value=self.Held(pygame.K_DOWN)):
+            game.update(1 / 60)
+        self.assertEqual(game.key_repeat, {})
+
+    def test_a_pad_repeat_does_not_cancel_a_rebind(self):
+        from pixel_rpg import gamepad
+        game = self.game()
+        game.state = "keybinds"
+        pad = gamepad.Gamepad()
+        pad._repeat.clear()
+        pad._repeat_keys(0.0, game, {pygame.K_DOWN})     # the first press
+        game.ui.rebinding = "interact"
+        for _ in range(60):
+            pad._repeat_keys(1 / 60, game, {pygame.K_DOWN})
+        self.assertEqual(game.ui.rebinding, "interact")
+
+
+class TestASaveGivesBackTheSameSpot(unittest.TestCase):
+    """s96. The soak bot saved at y=3577.996 and loaded at 3578.0."""
+
+    def test_the_position_survives_to_the_bit(self):
+        from pixel_rpg import game as G
+        _display_only()
+        game = G.Game()
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "warden"
+        game.new_run("Keeper", 6)
+        game.dialogue = None
+        self.addCleanup(game.saves.delete, 6)
+        game.player.x, game.player.y = 5162.3371, 3577.996
+        game.save_run(force=True)
+        again = G.Game()
+        again.load_run(6)
+        self.assertEqual((again.player.x, again.player.y),
+                         (5162.3371, 3577.996))
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

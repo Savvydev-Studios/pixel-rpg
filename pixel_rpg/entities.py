@@ -1468,7 +1468,11 @@ def make_encounter(level, biome="meadow", mods=(1.0, 1.0, 1.0, 1.0, 0.6),
     hp_mult, atk_mult = pack_softening(count, party)
     softened = (hp * hp_mult, atk * atk_mult,
                 xp * 0.72, gold * 0.72, flee)
-    spread = max(1, level - 1)
+    # One either side of the fight's level, and the floor is the clamp's
+    # job. It was `max(1, level - 1)`, which at level 1 slid the whole
+    # window up - a level-1 pack rolled levels 1-3 where every other
+    # level's pack rolls its own level plus or minus one (s96).
+    spread = level - 1
     return [make_enemy(int(clamp(spread + rng.rint(0, 2), 1, MAX_LEVEL)),
                        biome, softened)
             for _ in range(count)]

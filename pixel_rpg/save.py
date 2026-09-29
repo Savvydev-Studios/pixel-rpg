@@ -109,8 +109,12 @@ def serialize_player(player):
         "buffs": [[str(key), (-1 if until is None else int(until))]
                   for key, until in getattr(player, "buffs", ())],
         "points": player.points,
-        "x": round(player.x, 2),
-        "y": round(player.y, 2),
+        # **Exact, not rounded** (s96). Two places could carry 3577.996
+        # up to 3578.0 - a load a pixel lower than the save, which beside
+        # a wall is a pixel inside it. JSON writes a float so it reads
+        # back bit for bit; the file was only ever tidier for it.
+        "x": float(player.x),
+        "y": float(player.y),
         "attributes": dict(player.attributes),
         "equipment": {slot: (item.to_dict() if item else None)
                       for slot, item in player.equipment.items()},
