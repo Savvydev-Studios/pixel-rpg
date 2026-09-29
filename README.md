@@ -23,6 +23,37 @@ else's PC — `run.bat` resolves every path relative to itself, so it works
 wherever it lands. If the exe is ever missing, `run.bat` falls back to running
 from source.
 
+### On a Chromebook (or any Linux)
+
+If your Chromebook lets you turn on Linux - **Settings > About ChromeOS >
+Developers > Linux development environment** - the full game runs there,
+co-op included. School-managed Chromebooks usually have this switched off
+by the school; if the button is missing or greyed out, see *In a browser*
+below instead.
+
+1. On GitHub, open the repository, pick the branch, and use
+   **Code > Download ZIP**.
+2. In the Files app, drag the ZIP into **Linux files**.
+3. Open the **Terminal** app and type:
+
+```bash
+unzip pixel-rpg-*.zip
+cd pixel-rpg-*/
+bash run.sh
+```
+
+The first run installs what it needs (a minute or two, once); after that
+`bash run.sh` just starts the game. Saves live in
+`~/.local/share/Pixel_RPG`, not in the folder, so a newer download
+replaces the folder and keeps every save.
+
+### In a browser
+
+`python tools/build_web.py` makes `build/web`, a page version of the game
+that any browser can open once it is on a web host - which is how a
+Chromebook without Linux plays it. Co-op does not work from a hosted page.
+See HANDOFF section 39.
+
 From source instead:
 
 ```bash
@@ -182,6 +213,7 @@ bosses, four battle commands and a `save.json` next to the script.
 ```
 main.py                  entry point
 run.bat                  launcher, works from any folder
+run.sh                   the same for Linux and a Chromebook's Linux
 Pixel_RPG.exe            self-contained build
 
 pixel_rpg/
@@ -419,6 +451,7 @@ Two ways to bring it:
 ## Known limitations
 
 - Attribute points are not refundable. There is no respec.
-- The `.exe` is Windows-only. On macOS or Linux, run from source.
+- The `.exe` is Windows-only. On Linux - a Chromebook's included - use
+  `bash run.sh`; on macOS, run from source.
 - Windows may warn about an unsigned executable the first time; the build is
   unsigned because code-signing certificates cost money.
