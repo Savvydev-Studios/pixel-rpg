@@ -366,12 +366,13 @@ def draw_hoard_hud(game, fight, width, height, right):
     panel(surface, right, alpha=210)
     left = max(0.0, float(getattr(run, "left", 0.0)))
     urgent = left <= 20.0
-    draw_text(surface, assets,
-              "%d:%02d" % (int(left) // 60, int(left) % 60),
-              (right.x + 12, right.y + 8), "small",
-              BAD if urgent else ACCENT)
+    clock = draw_text(surface, assets,
+                      "%d:%02d" % (int(left) // 60, int(left) % 60),
+                      (right.x + 12, right.y + 8), "small",
+                      BAD if urgent else ACCENT)
+    # Each right-hand figure on its left-hand partner's centre (§7, §94).
     draw_text(surface, assets, "%d safe" % safe,
-              (right.right - 12, right.y + 10), "tiny", DIM, right=True)
+              (right.right - 12, clock.centery), "tiny", DIM, right=True)
     # **The rule has to be on the screen or nobody finds it** (§87). A
     # trip of ten or more pays double, and that is the decision this mode
     # is made of - so the right of the row counts down to it and goes
@@ -383,16 +384,17 @@ def draw_hoard_hud(game, fight, width, height, right):
     from . import gamemodes
     big = int(gamemodes.HOARD_BIG_TRIP)
     doubled = held >= big
-    draw_text(surface, assets,
-              ellipsize(assets.font("tiny"),
-                        "carrying %d" % held if held else "arms empty",
-                        right.w - 84),
-              (right.x + 12, right.y + 30), "tiny",
-              GOOD if held else DIM)
+    carried = draw_text(surface, assets,
+                        ellipsize(assets.font("tiny"),
+                                  "carrying %d" % held if held
+                                  else "arms empty",
+                                  right.w - 84),
+                        (right.x + 12, right.y + 30), "tiny",
+                        GOOD if held else DIM)
     if held:
         draw_text(surface, assets,
                   "DOUBLE" if doubled else "%d to double" % (big - held),
-                  (right.right - 12, right.y + 32), "tiny",
+                  (right.right - 12, carried.centery), "tiny",
                   ACCENT if doubled else DIM, right=True)
 
 
@@ -448,10 +450,10 @@ def draw_roam_hud(game, fight, width, height):
         # collide at 390 once the numbers get to two digits - and both
         # numbers grow all night, so the wide case is the temporary one.
         if right.w >= 150:
-            draw_text(surface, assets, "%d felled" % run.kills,
-                      (right.x + 12, right.y + 30), "tiny", DIM)
+            felled = draw_text(surface, assets, "%d felled" % run.kills,
+                               (right.x + 12, right.y + 30), "tiny", DIM)
             draw_text(surface, assets, "%d left" % len(fight.living_foes),
-                      (right.right - 12, right.y + 30), "tiny",
+                      (right.right - 12, felled.centery), "tiny",
                       BAD if fight.living_foes else GOOD, right=True)
         else:
             draw_text(surface, assets,
@@ -478,11 +480,16 @@ def draw_roam_hud(game, fight, width, height):
         tone = ACCENT if held is skill else (
             DIM if cooling > 0 or who.mp < skill.mp else INK)
         panel(surface, chip, alpha=170)
-        # The number always fits; the name is what gives way.
-        room_for = max(1, (chip_w - 22) // 7)
+        # The number always fits; the name is what gives way - measured,
+        # not counted at seven pixels a letter (§94). And centred: given
+        # `chip.centery` as a top, the label hung on the chip's floor.
+        tiny = assets.font("tiny")
+        number = "%d " % (n + 1)
         draw_text(surface, assets,
-                  "%d %s" % (n + 1, skill.name[:room_for]),
-                  (chip.x + 8, chip.centery), "tiny", tone)
+                  number + ellipsize(tiny, skill.name,
+                                     chip_w - 16 - tiny.size(number)[0]),
+                  (chip.x + 8, chip.centery - tiny.get_height() // 2),
+                  "tiny", tone)
         if cooling > 0:
             wide = int(chip.w * clamp(
                 cooling / max(0.1, fr.FreeRoam.skill_cooldown(skill)), 0, 1))

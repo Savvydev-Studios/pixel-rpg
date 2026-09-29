@@ -857,10 +857,12 @@ def draw_enemy_plate(game, battle, width, height):
             break
         ratio = foe.hp / max(1, foe.max_hp())
         if target:
-            draw_text(surface, assets, foe.name[:26],
-                      (plate.x + 16, y + 4), "body", INK)
+            named = draw_text(surface, assets, foe.name[:26],
+                              (plate.x + 16, y + 4), "body", INK)
+            # On the name's centre: `right=True` anchors there (§7, §94).
             draw_text(surface, assets, "Lv %d" % foe.level,
-                      (plate.right - 16, y + 6), "small", DIM, right=True)
+                      (plate.right - 16, named.centery), "small", DIM,
+                      right=True)
             # **The tween is the target's**, because it is the one the
             # damage numbers are landing on; the others read their health
             # straight, which is honest and costs nothing.
@@ -1029,10 +1031,10 @@ def draw_player_plate(game, battle, width, height):
     surface, assets, player = game.screen, game.assets, battle.you
     plate = battle_panels(battle, width, height)["player"]
     panel(surface, plate, alpha=228)
-    draw_text(surface, assets, player.name[:20], (plate.x + 16, plate.y + 10),
-              "body", INK)
+    named = draw_text(surface, assets, player.name[:20],
+                      (plate.x + 16, plate.y + 10), "body", INK)
     draw_text(surface, assets, "Lv %d" % player.level,
-              (plate.right - 16, plate.y + 12), "small", ACCENT, right=True)
+              (plate.right - 16, named.centery), "small", ACCENT, right=True)
     ratio = player.hp / max(1, player.max_hp())
     bar(surface, (plate.x + 16, plate.y + 40, plate.w - 32, 14),
         game.hp_tween.value, hp_color(ratio),
@@ -1106,12 +1108,13 @@ def draw_menu(game, battle, width, height):
         elif game.hover == ("battle_menu", i) and not theirs:
             highlight(surface, row, ACCENT, fill_alpha=38, border=2)
         color = (ACCENT if selected else INK) if enabled else FAINT
-        draw_text(surface, assets, "%d. %s" % (i + 1, label),
-                  (row.x + 14, row.y + 6), "body", color)
+        named = draw_text(surface, assets, "%d. %s" % (i + 1, label),
+                          (row.x + 14, row.y + 6), "body", color)
         if label == "Item":
             count = sum(battle.actor.consumables.values())
-            draw_text(surface, assets, str(count), (row.right - 14, row.y + 8),
-                      "small", DIM if enabled else FAINT, right=True)
+            draw_text(surface, assets, str(count),
+                      (row.right - 14, named.centery), "small",
+                      DIM if enabled else FAINT, right=True)
     # **Who you are waiting on is said in the turn bar, not here.** Five
     # rows at a 33 pitch leave ten pixels inside this panel and the note
     # landed on the Flee row - and the bar is the thing that exists to
@@ -1140,10 +1143,12 @@ def draw_submenu(game, battle, width, height):
             highlight(surface, row, color, fill_alpha=54)
         elif game.hover == ("battle_sub", i):
             highlight(surface, row, color, fill_alpha=38, border=2)
-        draw_text(surface, assets, label[:26], (row.x + 12, row.y + 6), "small",
-                  color if usable else FAINT)
-        draw_text(surface, assets, cost, (row.right - 12, row.y + 6), "small",
-                  DIM if usable else BAD, right=True)
+        named = draw_text(surface, assets, label[:26], (row.x + 12, row.y + 6),
+                          "small", color if usable else FAINT)
+        # The cost on the name's line. At `row.y + 6` it rode half a line
+        # high and the top row's poked out of its highlight (§7, §94).
+        draw_text(surface, assets, cost, (row.right - 12, named.centery),
+                  "small", DIM if usable else BAD, right=True)
 
     if rows:
         detail = rows[min(battle.sub_index, len(rows) - 1)][1]

@@ -83,7 +83,6 @@ RECORDS = "records"
 ACHIEVEMENTS_SCREEN = "achievements"
 ENDING_CHOICE = "endingchoice"
 ENDING_TEXT = "endingtext"
-PROLOGUE = "prologue"
 OVERWORLD = "overworld"
 BATTLE = "battle"
 INVENTORY = "inventory"
@@ -6272,9 +6271,12 @@ class Game:
         width, height = surface.get_size()
 
         panel(surface, (12, 12, 328, 112), alpha=214)
-        draw_text(surface, self.assets, player.name, (28, 22), "body", INK)
+        named = draw_text(surface, self.assets, player.name, (28, 22), "body",
+                          INK)
+        # On the name's centre line: `right=True` anchors on the centre
+        # (§7), and `24` was a top (§94).
         draw_text(surface, self.assets, "Lv %d" % player.level,
-                  (326, 24), "small", ACCENT, right=True)
+                  (326, named.centery), "small", ACCENT, right=True)
 
         ratio = player.hp / max(1, player.max_hp())
         bar(surface, (28, 46, 296, 15), self.hp_tween.value, hp_color(ratio),
@@ -7633,12 +7635,17 @@ class Game:
         # The answers given along the road decide which one is highlighted
         # first, so the ending you have been leaning toward is the one your
         # hand is already on.
+        #
+        # **The default goes first** (§94). It was written *after* the loop,
+        # so the cursor was put on the leaning ending and then straight back
+        # on the first one - and mechanism 1 of §33, *"the Door simply
+        # starts your cursor on whichever is heaviest"*, has never happened.
+        self.ui.ending_index = 0
         leading = scenes_mod.leading_ending(self.player.leanings)
         for i, option in enumerate(self.ending_options):
             if option.key == leading:
                 self.ui.ending_index = i
                 break
-        self.ui.ending_index = 0
         self.state = ENDING_CHOICE
         self.sfx("portal")
 

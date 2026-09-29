@@ -57,6 +57,12 @@ SPRITES = []
 # "a LOT of places" is what a shared helper drifting looks like from the
 # player's chair.
 HIGHLIGHTS = []
+# **How each text was anchored** (§94), by its sequence number. `right=True`
+# anchors on the vertical *centre* (§7), and a caller that hands it the
+# same `y` as the label beside it draws the value half a line high. That
+# was on the shop, the smith, the hero sheet, the bag, the records and a
+# dozen more, and no rule here could see it: nothing overlapped.
+ANCHORS = {}
 RECORDING = False
 
 # Surfaces that are scenery rather than a thing in the scene: gradients,
@@ -206,6 +212,8 @@ def rec_text(surface, assets, text, pos, font="body", color=ui.INK,
     if RECORDING and str(text).strip():
         ORDER[0] += 1
         TEXTS.append((pygame.Rect(rect), str(text), font, ORDER[0]))
+        ANCHORS[ORDER[0]] = ("right" if right else "center" if center
+                             else "left")
     return rect
 
 
@@ -244,6 +252,7 @@ def start():
     PANELS.clear()
     SPRITES.clear()
     HIGHLIGHTS.clear()
+    ANCHORS.clear()
     ORDER[0] = 0
     RECORDING = True
 
@@ -311,7 +320,57 @@ def analyse(label, screen_size, allow_overlap=(), world=False):
                             % (text[:24], tuple(holder)))
 
     problems += highlight_problems()
+    problems += askew_problems()
     problems += sprite_problems(bounds, world)
+    return problems
+
+
+def askew_problems():
+    """A right-aligned value that does not sit on its label's line (§94).
+
+    `draw_text(..., right=True)` anchors on the vertical centre and a
+    left-aligned draw anchors on the top (§7), so a row written as
+    `(left, y)` and `(right, y)` puts the value half a line above the
+    label. Nothing overlaps and nothing spills, so every rule above
+    passed it; it read as a price floating over its item, and on the
+    first row of a list it poked out of the top of the highlight.
+
+    **The rule is one line against one line.** A value is compared with
+    the nearest left-anchored text to its left that it shares any height
+    with, and reported when their centres are four or more pixels apart.
+    A tag that spans **two** lines on its left - the "unlocked" beside a
+    feat's title and its description - is centred on the pair on
+    purpose, and is not a row.
+    """
+    problems = []
+    for rect, text, _font, seq in TEXTS:
+        if ANCHORS.get(seq) != "right":
+            continue
+        level = [(other, words) for other, words, _f, oseq in TEXTS
+                 if ANCHORS.get(oseq) == "left" and other.x < rect.x
+                 and min(other.bottom, rect.bottom) - max(other.y, rect.y)
+                 > 0]
+        # The lines are counted from everything that starts to its left,
+        # because the second line of a block can run on underneath it -
+        # and from any overlap at all, because it can be short.
+        lines = sorted({other.centery for other, _w in level})
+        if not lines or lines[-1] - lines[0] >= 4:
+            continue                       # centred on a block, not a row
+        # **Sharing most of a line, not touching one.** A value half a line
+        # off still shares about half its height with the label; a "8
+        # below" note sitting under a list shares a sliver with the last
+        # row, and it is not that row's value.
+        beside = [(other, words) for other, words in level
+                  if other.right <= rect.x + 2
+                  and min(other.bottom, rect.bottom) - max(other.y, rect.y)
+                  >= 0.4 * min(other.h, rect.h)]
+        if not beside:
+            continue
+        other, words = max(beside, key=lambda pair: pair[0].right)
+        if abs(other.centery - rect.centery) >= 4:
+            problems.append("ASKEW      %-26r %+dpx off %r's line"
+                            % (text[:24], rect.centery - other.centery,
+                               words[:20]))
     return problems
 
 
@@ -563,6 +622,25 @@ def _quest_tab(g, tab):
         g.ui.quest_tab = was
 
 
+def _active_with_errands(g):
+    """The Active tab with errands on it (§94).
+
+    **This tab had never been drawn here.** The suite checked Offered,
+    Story and Feats, so the one tab with a progress bar on every row - and
+    an errand tag printed on top of every errand's count - was a silent
+    pass for as long as errands have existed. The errands are put back
+    afterwards so no other screen inherits them.
+    """
+    from pixel_rpg import quests as quests_mod
+    was = (list(g.quests.errands), dict(g.quests.baselines))
+    try:
+        for errand in quests_mod.ERRAND_DEFS[:3]:
+            g.quests.accept_errand(errand.key, g.player)
+        _quest_tab(g, 2)
+    finally:
+        g.quests.errands, g.quests.baselines = was[0], was[1]
+
+
 def _slots_mode(g, mode):
     """The picker answers three different questions and draws each of them
     differently (s19 5b, 5c). Checking one mode checked one of them."""
@@ -678,6 +756,7 @@ def screen_suite(g, size):
         ("quests", lambda: _quest_tab(g, 1)),
         # s7: a tab the checker never selects is a tab it never looked at.
         ("quests story", lambda: _quest_tab(g, menus.STORY_TAB)),
+        ("quests active", lambda: _active_with_errands(g)),
         ("quests feats", lambda: _quest_tab(g, 4)),
         ("pause", lambda: menus.draw_pause(g)),
         ("settings", lambda: menus.draw_settings(g)),
@@ -1407,6 +1486,24 @@ def selftest():
         ui.row_text(screen, assets, "sitting neatly",
                     pygame.Rect(80, 200, 200, 30), "small")
 
+    # **And the askew rule** (§94). A value handed its label's top, the
+    # same value handed its label's centre, and a tag centred on a
+    # two-line block - which is a design, not a row.
+    def value_half_a_line_high():
+        ui.draw_text(screen, assets, "Attack", (100, 300), "small")
+        ui.draw_text(screen, assets, "30", (400, 300), "small", right=True)
+
+    def value_on_its_line():
+        label = ui.draw_text(screen, assets, "Attack", (100, 340), "small")
+        ui.draw_text(screen, assets, "30", (400, label.centery), "small",
+                     right=True)
+
+    def tag_on_a_block():
+        ui.draw_text(screen, assets, "Warden Slayer", (100, 380), "small")
+        ui.draw_text(screen, assets, "Defeat all six", (100, 400), "tiny")
+        ui.draw_text(screen, assets, "locked", (400, 396), "tiny",
+                     right=True)
+
     print("\n=== self-test: can these rules fail? ===")
     expect("two sprites stacked", "SPRITES ON", stacked)
     expect("two sprites apart", "SPRITES ON", apart, wanted=False)
@@ -1418,6 +1515,11 @@ def selftest():
     expect("a label out of its highlight", "HALF-LIT", label_out_of_its_box)
     expect("a label inside its highlight", "HALF-LIT",
            label_inside_its_box, wanted=False)
+    expect("a value half a line high", "ASKEW", value_half_a_line_high)
+    expect("a value on its label's line", "ASKEW", value_on_its_line,
+           wanted=False)
+    expect("a tag centred on two lines", "ASKEW", tag_on_a_block,
+           wanted=False)
 
     print("\n" + "-" * 62)
     if failures:
@@ -1429,6 +1531,17 @@ def selftest():
 
 if __name__ == "__main__":
     __import__("pixel_rpg.assets", fromlist=["a"]).init_pygame()
+    # **`--font PATH` measures against one named file** (§94). Every rule
+    # in here is `font.size()` underneath, so "0 problems" is a claim
+    # about a font; this is how a machine without Consolas makes it about
+    # the one it names instead of whatever the system hands back.
+    if "--font" in sys.argv:
+        at = sys.argv.index("--font")
+        if at + 1 >= len(sys.argv) or not os.path.isfile(sys.argv[at + 1]):
+            print("--font needs the path of a font file")
+            sys.exit(2)
+        from pixel_rpg.assets import Assets
+        Assets.FONT_PATH = sys.argv[at + 1]
     if "--selftest" in sys.argv:
         code = selftest()
     else:

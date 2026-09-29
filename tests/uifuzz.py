@@ -95,7 +95,17 @@ class Fault(Exception):
 #: newest thing in the game, a player sees it after every single wave,
 #: and 2400 random events never reached it once - which is exactly the
 #: silent pass §7 keeps warning about, in a fuzzer instead of a checker.
-SCENARIOS = ("plain", "plain", "spoils", "picker", "battle")
+SCENARIOS = ("plain", "plain", "spoils", "picker", "battle",
+             "shop", "smith", "gameover", "newskill", "fullbag",
+             "chapter", "ending", "devmenu", "title")
+
+#: **The places the long road goes that no key finds by accident** (§94).
+#: 43,200 events reached none of them - the shop, the smith, falling, a
+#: new skill, a full bag, a chapter card, the Door's endings - and the
+#: coverage report said so every run. They are all story-mode screens, so
+#: these scenarios choose the story whatever the dice say.
+STORY_SCENARIOS = {"shop", "smith", "gameover", "newskill", "fullbag",
+                   "chapter", "ending", "devmenu"}
 
 
 def fresh(rng, size):
@@ -103,12 +113,21 @@ def fresh(rng, size):
     game = G.Game()
     game.screen = pygame.display.set_mode(size)
     scenario = rng.choice(SCENARIOS)
+    if scenario == "title":
+        # **Before any run exists** - the splash, the title and every
+        # menu hanging off it. Mashing from here is how a player gets
+        # into a new game, a load, the lobby or the records.
+        for _ in range(rng.choice((1, 40))):
+            game.update(1 / 30)
+        return game, "none/title"
     # **The scenario picks the mode when it needs one.** A hand of offers
     # only exists after a wave, so a fuzzer that chose the mode first
     # reached the offers screen in one round out of twenty - which reads
     # as coverage and is not.
     if scenario in ("spoils", "battle"):
         mode = "waves"
+    elif scenario in STORY_SCENARIOS:
+        mode = "story"
     else:
         mode = rng.choice(STARTS)
     game.choose_mode(mode)
@@ -147,8 +166,58 @@ def put_there(game, scenario, mode):
                 game.finish_battle()
     elif scenario == "battle" and game.waves is not None:
         game.begin_wave()
+    elif scenario in STORY_SCENARIOS and game.player is not None:
+        put_on_the_road(game, scenario)
     for _ in range(20):
         game.update(1 / 30)
+
+
+def put_on_the_road(game, scenario):
+    """One of the story's screens, reached the way the game reaches it.
+
+    Each goes through the same call the game makes - `take_item` for a
+    full bag, `learned_skill` for a new one, `offer_ending_menu` for the
+    Door - so the screen is in the state a player would find it in, not a
+    state the fuzzer invented.
+    """
+    from pixel_rpg import story
+    from pixel_rpg.items import roll_item
+    player = game.player
+    game.dialogue = None
+    game.state = G.OVERWORLD
+    if scenario == "shop":
+        game.go(G.SHOP)
+        game.ui.refresh_shop(player, game.world)
+    elif scenario == "smith":
+        for _ in range(4):
+            player.add_item(roll_item(player.level + 3))
+        game.go(G.SMITH)
+    elif scenario == "gameover":
+        game.message = "You wake at the shrine, 20 gold lighter."
+        game.state = G.GAMEOVER
+    elif scenario == "newskill":
+        player.gain_xp(30000)
+        known = player.known_skills()
+        carried = {skill.key for skill in player.skills()}
+        spare = [skill for skill in known if skill.key not in carried]
+        if spare:
+            game.learned_skill(spare[0])
+    elif scenario == "fullbag":
+        while not player.bag_full():
+            if not player.add_item(roll_item(player.level)):
+                break
+        game.take_item(roll_item(player.level + 2), source="fuzz")
+    elif scenario == "chapter":
+        player.chapter_seen = 0
+        game.refresh_chapter()
+    elif scenario == "ending":
+        for entry in story.CODEX:
+            game.meta.unlock_codex(entry.key)
+        for portal in game.world.portals:
+            portal.defeated = True
+        game.offer_ending_menu()
+    elif scenario == "devmenu":
+        game.open_devmenu()
 
 
 def step(game, dt=1 / 30):
@@ -467,8 +536,19 @@ def main(argv=None):
 
 
 def known_states():
-    return {v for k, v in vars(G).items()
-            if k.isupper() and isinstance(v, str) and not k.startswith("_")}
+    """The states `game.py` defines - read from its source, not its
+    namespace (§94).
+
+    `vars(G)` also holds whatever `game.py` imported, and it imports
+    `battle.MENU` and `battle.SUBMENU`: two phases of a fight, which the
+    coverage report listed as screens it had never reached for as long as
+    it has existed. A report that names a place you cannot go is a report
+    somebody learns to skim.
+    """
+    import inspect
+    import re
+    source = inspect.getsource(G)
+    return set(re.findall(r'^[A-Z][A-Z_]* = "([a-z_]+)"$', source, re.M))
 
 
 if __name__ == "__main__":

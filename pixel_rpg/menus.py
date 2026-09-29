@@ -399,6 +399,36 @@ def draw_title(game):
               (width // 2, height - 28), "tiny", FAINT, center=True)
 
 
+def fitting_size(assets, text, width, sizes=("small", "tiny")):
+    """The largest of `sizes` that `text` fits in `width`, else the last.
+
+    The rule §35 settled for rows - **a squeezed label steps down a size
+    rather than forcing the box** - as one call, for text that is somebody's
+    words and loses its point when an ellipsis takes the end (§94).
+    """
+    for size in sizes:
+        if assets.font(size).size(text)[0] <= width:
+            return size
+    return sizes[-1]
+
+
+def range_note(font, first, last, count, width,
+               hints=("Left and Right to read on", "Left/Right")):
+    """`3-10 of 24   Left and Right to read on`, as much of it as fits.
+
+    **The range is the part that matters and it comes first** (§94); the
+    hint after it steps down to a shorter wording and then goes, rather
+    than running out through the box it describes. In Consolas the long
+    form fits every box it is drawn in; in a wider face it did not.
+    """
+    span = "%d-%d of %d" % (first, last, count)
+    for hint in tuple(hints) + ("",):
+        note = "%s   %s" % (span, hint) if hint else span
+        if font.size(note)[0] <= width:
+            return note
+    return ellipsize(font, span, width)
+
+
 def scroll_hint(surface, assets, rect, state, count):
     """Say how much of a list you are looking at.
 
@@ -416,8 +446,9 @@ def scroll_hint(surface, assets, rect, state, count):
               state.offset, state.visible, count)
     first = state.offset + 1
     last = min(state.offset + state.visible, count)
-    draw_text(surface, assets, "%d-%d of %d   scroll for more"
-              % (first, last, count),
+    draw_text(surface, assets,
+              range_note(assets.font("tiny"), first, last, count,
+                         rect.w - 40, ("scroll for more",)),
               (rect.centerx, rect.bottom - 38), "tiny", FAINT, center=True)
 
 
@@ -509,18 +540,20 @@ def draw_slots(game):
                           "finished" if done else "not finished yet",
                           (row.right - 20, row.y + 22), "tiny",
                           GOOD if done else FAINT, right=True)
-            draw_text(surface, game.assets,
-                      ellipsize(game.assets.font("small"),
-                                "%s   Lv %d   %d gold   %d/6 wardens"
-                                % (info["name"], info["level"], info["gold"],
-                                   info["bosses"]),
-                                row.w - 40 - stamp_w),
-                      (row.x + 20, row.y + 38), "small", DIM)
+            facts = draw_text(surface, game.assets,
+                              ellipsize(game.assets.font("small"),
+                                        "%s   Lv %d   %d gold   %d/6 wardens"
+                                        % (info["name"], info["level"],
+                                           info["gold"], info["bosses"]),
+                                        row.w - 40 - stamp_w),
+                              (row.x + 20, row.y + 38), "small", DIM)
             # The timestamp is the column that goes. It is the least of the
             # six facts and the only one the player can get elsewhere.
+            # On the facts' own centre line: `right=True` anchors on the
+            # centre (§7), and given `row.y + 38` it sat half a line high.
             if not narrow:
                 draw_text(surface, game.assets, stamp,
-                          (row.right - 20, row.y + 38), "tiny", FAINT,
+                          (row.right - 20, facts.centery), "tiny", FAINT,
                           right=True)
     scroll_hint(surface, game.assets, rect, state, len(slots))
 
@@ -745,8 +778,11 @@ def draw_name_entry(game):
     # Live preview, drawn from the very same code the game will use.
     if stacked:
         stage_top = top + row_h * len(CREATOR_ROWS) + 12
+        # Stopping above the name rule, which is centred on
+        # `rect.bottom - 30` - ending there drew the card's border
+        # straight through it (§94).
         stage = pygame.Rect(left, stage_top, row_w,
-                            max(80, rect.bottom - 30 - stage_top))
+                            max(80, rect.bottom - 44 - stage_top))
     else:
         stage_x = left + row_w + 40
         stage = pygame.Rect(stage_x, top, max(80, rect.right - 46 - stage_x),
@@ -775,9 +811,15 @@ def draw_name_entry(game):
     # of the Begin button - which is the one row that must stay readable.
     rows_end = top + row_h * len(CREATOR_ROWS)
     if rect.bottom - 30 > rows_end + 6:
-        draw_text(surface, assets,
-                  "letters, digits, spaces, - and _ only (max %d)"
-                  % sec.MAX_NAME_LEN,
+        # **A shorter wording before an ellipsis** (§94): cut, this rule
+        # loses the limit, which is the half a player types against.
+        tiny = assets.font("tiny")
+        for rule in ("letters, digits, spaces, - and _ only (max %d)",
+                     "letters, digits, - and _ (max %d)", "max %d"):
+            rule %= sec.MAX_NAME_LEN
+            if tiny.size(rule)[0] <= rect.w - 40:
+                break
+        draw_text(surface, assets, ellipsize(tiny, rule, rect.w - 40),
                   (rect.centerx, rect.bottom - 30), "tiny", FAINT,
                   center=True)
 
@@ -841,14 +883,14 @@ def draw_inventory(game):
             row_highlight(surface, row, i == state.inv.index,
                           game=game, kind="inv", index=i)
             head = "%-16s x%d" % (item.name, count)
-            draw_text(surface, assets, head, (row.x + 12, row.y + 6), "small",
-                      item.color)
+            name = draw_text(surface, assets, head, (row.x + 12, row.y + 6),
+                             "small", item.color)
             # The description only if it fits beside the name. Same rule as
             # the stats on an item row, and the same reason.
             room = row.w - assets.font("small").size(head)[0] - 40
             if assets.font("tiny").size(item.description)[0] <= room:
                 draw_text(surface, assets, item.description,
-                          (row.right - 12, row.y + 8), "tiny", DIM,
+                          (row.right - 12, name.centery), "tiny", DIM,
                           right=True)
         if rows and not narrow:
             key, item, count = rows[state.inv.index]
@@ -885,13 +927,13 @@ def draw_inventory(game):
                     else fit_stats(item, assets.font("tiny"), stats_w)
                     if stats_w >= 40 else "")
             tail_w = assets.font("tiny").size(tail)[0] if tail else 0
-            draw_text(surface, assets,
-                      ellipsize(assets.font("small"), item.name[:34],
-                                row.w - 28 - tail_w),
-                      (row.x + 12, row.y + 6), "small", item.color)
+            name = draw_text(surface, assets,
+                             ellipsize(assets.font("small"), item.name[:34],
+                                       row.w - 28 - tail_w),
+                             (row.x + 12, row.y + 6), "small", item.color)
             if tail:
                 draw_text(surface, assets, tail,
-                          (row.right - 12, row.y + 8), "tiny",
+                          (row.right - 12, name.centery), "tiny",
                           GOOD if equipped else DIM, right=True)
         if items and not narrow:
             chosen = items[state.inv.index]
@@ -1071,8 +1113,15 @@ def confirm_button(surface, assets, game, rect, label, detail="",
     hovered = enabled and game is not None and game.hover == ("confirm", 0)
     if hovered:
         highlight(surface, rect, color, fill_alpha=40, border=2)
-    draw_text(surface, assets, label,
-              (rect.centerx, rect.y + (10 if detail else rect.h // 2 - 10)),
+    # Never wider than the button it is on. Every caller sizes for its own
+    # labels; this is the floor under a face wider than the one it was
+    # sized in (§94).
+    # **`rect.centery`, not `rect.h // 2 - 10`** (§94). That was the *top*
+    # of a twenty-pixel label, and `center=True` anchors the middle - so a
+    # button with no second line wore its label against its top edge.
+    draw_text(surface, assets, ellipsize(assets.font("body"), label,
+                                         rect.w - 12),
+              (rect.centerx, rect.y + 10 if detail else rect.centery),
               "body", color if enabled else FAINT, center=True)
     if detail:
         draw_text(surface, assets, detail, (rect.centerx, rect.y + 34),
@@ -1107,13 +1156,19 @@ def purse(surface, assets, player, rect, price=None):
         # written over another.
         draw_text(surface, assets, "GOLD", (box.x + 14, box.y + 14), "tiny",
                   DIM)
-        draw_text(surface, assets, commafy(player.gold),
-                  (box.x + 60, box.y + 21), "small",
-                  ACCENT if affordable else BAD)
-        draw_text(surface, assets, "BAG", (box.centerx - 20, box.y + 14),
-                  "tiny", DIM)
+        # **A top, not a midpoint** (§94): this is a left-aligned draw, so
+        # `box.y + 21` put the gold eight pixels below everything else on
+        # the row. It sits where the bag figure beside it always has.
+        gold = draw_text(surface, assets, commafy(player.gold),
+                         (box.x + 60, box.y + 12), "small",
+                         ACCENT if affordable else BAD)
+        # And the bag starts where the gold ends, not at the middle: a
+        # six-figure purse already reached `BAG` in Consolas, and in any
+        # wider face it was drawn over it.
+        bag_x = max(box.centerx - 20, gold.right + 12)
+        draw_text(surface, assets, "BAG", (bag_x, box.y + 14), "tiny", DIM)
         draw_text(surface, assets, "%d / %d" % (used, cap),
-                  (box.centerx + 22, box.y + 12), "small",
+                  (bag_x + 42, box.y + 12), "small",
                   BAD if used >= cap else INK)
         if box.w >= 330:
             # Dropped on the narrowest frames. Steel is the smith's currency
@@ -1131,12 +1186,14 @@ def purse(surface, assets, player, rect, price=None):
               ACCENT if affordable else BAD, right=True)
 
     draw_text(surface, assets, "BAG", (box.x + 14, box.y + 46), "tiny", DIM)
-    draw_text(surface, assets, "%d / %d" % (used, cap),
-              (box.x + 58, box.y + 44), "small",
-              BAD if used >= cap else INK)
+    bag = draw_text(surface, assets, "%d / %d" % (used, cap),
+                    (box.x + 58, box.y + 44), "small",
+                    BAD if used >= cap else INK)
 
-    draw_text(surface, assets, "STEEL", (box.x + 126, box.y + 46), "tiny",
-              DIM)
+    # After the bag figure, measured: `60 / 60` is five pixels short of
+    # 126 in Consolas and past it in anything wider (§94).
+    draw_text(surface, assets, "STEEL", (max(box.x + 126, bag.right + 4),
+                                         box.y + 46), "tiny", DIM)
     draw_text(surface, assets, str(player.materials),
               (box.right - 14, box.y + 52), "small", INK, right=True)
     return box
@@ -1209,10 +1266,12 @@ def draw_shop(game):
         tag = "%d g" % price
         while name and font.size(name)[0] + font.size(tag)[0] > row.w - 40:
             name = name[:-1]
-        draw_text(surface, assets, name, (row.x + 12, row.y + 6), "small",
-                  GOOD if kind == "bag" else payload.color)
+        drawn = draw_text(surface, assets, name, (row.x + 12, row.y + 6),
+                          "small", GOOD if kind == "bag" else payload.color)
         affordable = state.shop_mode == "sell" or player.gold >= price
-        draw_text(surface, assets, tag, (row.right - 12, row.y + 6),
+        # On the name's centre line (§7, §94). At `row.y + 6` every price
+        # sat half a line high and the top one poked out of its highlight.
+        draw_text(surface, assets, tag, (row.right - 12, drawn.centery),
                   "small", ACCENT if affordable else BAD, right=True)
 
     if rows and not narrow:
@@ -1398,14 +1457,19 @@ def draw_smith(game):
         elif item:
             tag, tag_colour = "+%d steel" % salvage_yield(item), ACCENT
         tag_w = assets.font("tiny").size(tag)[0] if tag else 0
-        draw_text(surface, assets,
-                  ellipsize(assets.font("small"),
-                            item.name if item else "- nothing -",
-                            row.w - 34 - tag_w),
-                  (row.x + 14, row.y + 20), "small",
-                  item.color if item else FAINT)
+        drawn = draw_text(surface, assets,
+                          ellipsize(assets.font("small"),
+                                    item.name if item else "- nothing -",
+                                    row.w - 34 - tag_w),
+                          (row.x + 14, row.y + 20), "small",
+                          item.color if item else FAINT)
         if tag:
-            draw_text(surface, assets, tag, (row.right - 14, row.y + 20),
+            # A slot row is two lines and its price is centred on the pair;
+            # a salvage row is the name alone, so the yield sits on the
+            # name's own centre - at `row.y + 20` it floated above it (§94).
+            draw_text(surface, assets, tag,
+                      (row.right - 14,
+                       row.y + 20 if kind == "slot" else drawn.centery),
                       "tiny", tag_colour, right=True)
 
     chosen = rows[state.smith.index][2] if rows else None
@@ -1533,10 +1597,11 @@ def draw_character(game):
     draw_text(surface, assets, "XP %d / %d" % (player.xp, player.xp_to_next()),
               (left, top + 18), "tiny", DIM)
 
-    draw_text(surface, assets,
-              ellipsize(assets.font("tiny"), player.pclass.signature_name,
-                        col_w // 2 - 20),
-              (left, top + 40), "tiny", player.pclass.color)
+    signature = draw_text(surface, assets,
+                          ellipsize(assets.font("tiny"),
+                                    player.pclass.signature_name,
+                                    col_w // 2 - 20),
+                          (left, top + 40), "tiny", player.pclass.color)
     # **What your free swing is** (item 0ai, s65). It is the move a player
     # presses most and the only part of a class that was never written
     # down anywhere they could read it.
@@ -1550,7 +1615,8 @@ def draw_character(game):
     # signature and a long swing cannot meet in the middle.
     draw_text(surface, assets,
               ellipsize(assets.font("tiny"), strike.name, col_w // 2 - 20),
-              (left + col_w - 24, top + 40), "tiny", DIM, right=True)
+              (left + col_w - 24, signature.centery), "tiny", DIM,
+              right=True)
     stats = [("Max HP", player.max_hp()), ("Max MP", player.max_mp()),
              ("Attack", player.stat("atk")), ("Defense", player.stat("defense")),
              ("Magic", player.stat("mag")), ("Resist", player.stat("res")),
@@ -1558,19 +1624,29 @@ def draw_character(game):
              ("Crit", "%d%%" % player.stat("crit")),
              ("Crit dmg", "+%d%%" % player.stat("crit_dmg")),
              ("Lifesteal", "%d%%" % player.stat("lifesteal"))]
-    font = assets.font("small")
+    # **A size down before a value leaves its column** (§94). At 390 the
+    # right edge below was pushed past the column by `Crit dmg  +78%` and
+    # into the attributes beside it - in Consolas as well, just under the
+    # checker's tolerance. The same rule the attribute rows follow.
+    small = assets.font("small")
+    stat_font = ("small" if max(small.size(label)[0] + 16
+                                + small.size(str(value))[0]
+                                for label, value in stats) <= col_w - 24
+                 else "tiny")
+    font = assets.font(stat_font)
     for i, (label, value) in enumerate(stats):
         y = top + 66 + i * 24
         if y > rect.bottom - 30:
             break
-        draw_text(surface, assets, label, (left, y), "small", DIM)
+        drawn = draw_text(surface, assets, label, (left, y), stat_font, DIM)
         # Right-aligned, so the edge has to clear the label *plus* the value
         # itself. Forgetting the second half left a 23% overlap that read as
         # fixed and was not.
         edge = max(left + col_w - 24,
                    left + font.size(label)[0] + 16 + font.size(str(value))[0])
-        draw_text(surface, assets, str(value), (edge, y), "small", INK,
-                  right=True)
+        # And on the label's centre, not its top (§7, §94).
+        draw_text(surface, assets, str(value), (edge, drawn.centery),
+                  stat_font, INK, right=True)
 
     # **What you are wearing, directly under what it adds up to** (s45).
     # He asked for this twice - *"should be a way to check the stats of
@@ -1617,7 +1693,7 @@ def draw_character(game):
         draw_text(surface, assets, slot.title(), (left, y), "tiny", FAINT)
         name = item.name if item else "- empty -"
         draw_text(surface, assets,
-                  ellipsize(font, name, left + col_w - name_x - 12),
+                  ellipsize(small, name, left + col_w - name_x - 12),
                   (name_x, y), "small", item.color if item else FAINT)
         if item and show_stats:
             draw_text(surface, assets,
@@ -1652,7 +1728,14 @@ def draw_character(game):
     # it - trading one bad look for a worse one. `frame` already solves
     # this the right way round for its title: shrink the text, keep the
     # box honest.
-    attr_font = "small" if pitch >= assets.font("small").get_height() + 6         else "tiny"
+    # **And before the label runs out of its box** (§94) - the same rule
+    # across the row instead of down it. The widest label decides, so the
+    # nine rows stay one size.
+    widest = max(assets.font("small").size(
+        "%-9s %d" % (ATTRIBUTE_LABEL[key], player.attributes[key]))[0]
+        for key in ATTRIBUTES)
+    attr_font = ("small" if pitch >= assets.font("small").get_height() + 6
+                 and widest + 8 <= max(40, col_w - 10) else "tiny")
     line_h = assets.font(attr_font).get_height()
     for i, key in enumerate(ATTRIBUTES):
         y = attr_top + i * pitch
@@ -1719,18 +1802,22 @@ def draw_character(game):
         cost_w = assets.font("tiny").size(cost)[0]
         # The column is the budget. Widening past it to fit a long name put
         # the cost on top of the next column; the name gives way instead.
+        # Measured in the face it is drawn in. This read a `font` set by
+        # the stats block above, which is a size smaller on a narrow sheet.
         name = skill.name[:13]
-        while name and font.size(name)[0] + 14 + cost_w > col_w - 24:
+        while name and small.size(name)[0] + 14 + cost_w > col_w - 24:
             name = name[:-1]
-        draw_text(surface, assets, name, (right, y), "small",
-                  INK if (affordable and equipped)
-                  else DIM if equipped else FAINT)
+        drawn = draw_text(surface, assets, name, (right, y), "small",
+                          INK if (affordable and equipped)
+                          else DIM if equipped else FAINT)
         # **Inside the box, not past its edge** (s53). The cost was drawn
         # at `right + col_w - 24` and the row ends at `right + col_w - 30`,
         # so every MP figure hung six pixels out of the highlight behind
         # it - which is the thing he could see and the checker could not.
-        draw_text(surface, assets, cost, (row.right - 8, y), "tiny",
-                  DIM if affordable else FAINT, right=True)
+        # It hung out of the *top* as well, for the same reason in the
+        # other axis: a centre-anchored draw given a top (§94).
+        draw_text(surface, assets, cost, (row.right - 8, drawn.centery),
+                  "tiny", DIM if affordable else FAINT, right=True)
 
     tracker = player.stats_tracker
     lines = ["Kills %d" % tracker["kills"], "Wardens %d" % tracker["bosses"],
@@ -1898,14 +1985,20 @@ def draw_story_tab(game, rect):
 
     felled = game.world.wardens_defeated() if game.world else 0
     remaining = len(game.world.portals) - felled if game.world else 0
-    draw_text(surface, assets,
-              "%d of %d wardens have fallen.  %s"
-              % (felled, len(game.world.portals) if game.world else 6,
-                 "The Door is open." if not remaining
-                 else "%d %s left." % (remaining,
-                                       "road" if remaining == 1 else "roads")),
-              (rect.centerx, y + 10), "tiny", FAINT, center=True)
-    y += 42
+    # Wrapped to the frame (§94): one line on a desktop, and on a narrow
+    # window two rather than one running out through both edges.
+    tally = wrap_text("%d of %d wardens have fallen.  %s"
+                      % (felled, len(game.world.portals) if game.world else 6,
+                         "The Door is open." if not remaining
+                         else "%d %s left." % (remaining, "road"
+                                               if remaining == 1
+                                               else "roads")),
+                      assets.font("tiny"), rect.w - 40)
+    for line in tally:
+        draw_text(surface, assets, line, (rect.centerx, y + 10), "tiny",
+                  FAINT, center=True)
+        y += 16
+    y += 42 - 16
 
     # **Maren\'s own words for this chapter, already written and almost
     # never read twice.** `MAREN_BRIEFINGS` is keyed by the same number the
@@ -1965,6 +2058,13 @@ def draw_quests(game):
         draw_text(surface, assets, "Nothing here.",
                   (rect.centerx, rect.centery), "mid", FAINT, center=True)
 
+    # One width for every count on the page, so the bars stand in a column
+    # rather than each one stepping left by however long its number is.
+    count_col = max([assets.font("tiny").size(
+        "READY" if done >= target else "%d / %d" % (done, target))[0]
+        for done, target in (game.quests.progress(player, entry.key)
+                             for kind, entry in rows
+                             if kind in ("active", "errand"))] or [0])
     for i, (kind, entry) in state.quest.window(rows):
         row = pygame.Rect(rect.x + 30, rect.y + 128 + (i - state.quest.offset) * 52,
                           rect.w - 60, 46)
@@ -1985,32 +2085,60 @@ def draw_quests(game):
                       GOOD if done else FAINT, right=True)
             continue
 
-        draw_text(surface, assets, entry.title, (row.x + 14, row.y + 6),
-                  "small", INK)
-        if kind == "errand":
-            draw_text(surface, assets, "errand",
-                      (row.right - 14, row.y + 6), "tiny", FAINT, right=True)
-        draw_text(surface, assets, entry.detail, (row.x + 14, row.y + 26),
-                  "tiny", DIM)
+        # **The right-hand side is measured first and the words get what is
+        # left** (§94). The bar was a fixed 130 at a fixed `row.right - 190`
+        # and the title was never shortened, so on a narrow window the bar
+        # was drawn straight through the quest's name - on the Active tab,
+        # which `tests/layout.py` had never drawn.
+        small, tiny = assets.font("small"), assets.font("tiny")
+        text_x = row.x + 14
         if kind in ("active", "errand"):
             done, target = game.quests.progress(player, entry.key)
             ready = done >= target
-            bar(surface, (row.right - 190, row.y + 12, 130, 10),
-                done / max(1, target), GOOD if ready else (108, 164, 252))
-            draw_text(surface, assets,
-                      "READY" if ready else "%d / %d" % (done, target),
-                      (row.right - 14, row.y + 10), "tiny",
-                      GOOD if ready else DIM, right=True)
-        elif kind == "offer":
-            blocked = game.quests.full()
-            draw_text(surface, assets,
-                      "finish your current job first" if blocked
-                      else "%d g  %d xp" % (entry.gold, entry.xp),
-                      (row.right - 14, row.y + 16), "tiny",
-                      FAINT if blocked else ACCENT, right=True)
+            count = "READY" if ready else "%d / %d" % (done, target)
+            count_w = count_col
+            # The bar gives way before the name does, down to a stub that
+            # still reads as a bar.
+            bar_w = int(clamp(row.w - 28 - small.size(entry.title)[0] - 12
+                              - count_w - 8, 40, 130))
+            meter = pygame.Rect(row.right - 14 - count_w - 8 - bar_w,
+                                row.y + 12, bar_w, 10)
+            bar(surface, meter, done / max(1, target),
+                GOOD if ready else (108, 164, 252))
+            draw_text(surface, assets, count, (row.right - 14, meter.centery),
+                      "tiny", GOOD if ready else DIM, right=True)
+            # **At the end of the second line, not the first** (§94). The
+            # tag sat at `row.right - 14` on the first line - exactly where
+            # the count above is drawn - so every errand the player was on
+            # read `e0r/ra6d`.
+            tag = "errand" if kind == "errand" else ""
+            title_room = meter.x - 12 - text_x
+            detail_room = row.right - 14 - text_x - (
+                tiny.size(tag)[0] + 12 if tag else 0)
         else:
-            draw_text(surface, assets, "complete", (row.right - 14, row.y + 16),
-                      "tiny", GOOD, right=True)
+            # One tag, centred on the two lines, so both lines stop short
+            # of it.
+            if kind == "offer":
+                blocked = game.quests.full()
+                side = ("finish your current job first" if blocked
+                        else "%d g  %d xp" % (entry.gold, entry.xp))
+                tone = FAINT if blocked else ACCENT
+            else:
+                side, tone = "complete", GOOD
+            side = ellipsize(tiny, side, row.w // 2)
+            draw_text(surface, assets, side, (row.right - 14, row.y + 16),
+                      "tiny", tone, right=True)
+            tag = ""
+            title_room = detail_room = (row.right - 14 - text_x
+                                        - tiny.size(side)[0] - 12)
+        draw_text(surface, assets, ellipsize(small, entry.title, title_room),
+                  (text_x, row.y + 6), "small", INK)
+        detail = draw_text(surface, assets,
+                           ellipsize(tiny, entry.detail, detail_room),
+                           (text_x, row.y + 26), "tiny", DIM)
+        if tag:
+            draw_text(surface, assets, tag, (row.right - 14, detail.centery),
+                      "tiny", FAINT, right=True)
 
     if readonly:
         hint = "Reading only"
@@ -2505,9 +2633,13 @@ def draw_arena_select(game):
         first = start * cols + 1
         note = "%d-%d of %d   %s" % (
             first, min(len(ARENAS), (start + fit) * cols), len(ARENAS), note)
-    draw_text(surface, assets,
-              ellipsize(assets.font("tiny"), note, rect.w - 40),
-              (rect.centerx, rect.bottom - 22), "tiny", FAINT, center=True)
+    # Under the buttons by its own height (§94). Centred on a constant, it
+    # met their bottom edge in Consolas and crossed it in any taller face.
+    tiny = assets.font("tiny")
+    draw_text(surface, assets, ellipsize(tiny, note, rect.w - 40),
+              (rect.centerx, max(rect.bottom - 22,
+                                 row_y + 34 + 3 + tiny.get_height() // 2)),
+              "tiny", FAINT, center=True)
     assert ARENA_CADENCES
 
 
@@ -2832,9 +2964,9 @@ def draw_dialogue(game):
               (box.centerx, box.y + 30), "big", (250, 200, 200), center=True)
     if len(wrapped) > capacity:
         draw_text(surface, assets,
-                  "%d-%d of %d   Left and Right to read on"
-                  % (top + 1, min(top + capacity, len(wrapped)),
-                     len(wrapped)),
+                  range_note(assets.font("tiny"), top + 1,
+                             min(top + capacity, len(wrapped)), len(wrapped),
+                             box.w - 32),
                   (box.centerx, box.y + 60), "tiny", FAINT, center=True)
     y = box.y + head_h
     for i, line in enumerate(wrapped[top:top + capacity]):
@@ -3074,12 +3206,12 @@ def _offer_panel(surface, assets, rect, title, offer, locked, tone):
     # overlapping by a third. The first version of the fix ran them
     # together and ellipsized the result, which cut the *verdict* - so a
     # rule about fitting quietly deleted the thing the panel is for.
-    draw_text(surface, assets,
-              ellipsize(assets.font("small"), title, rect.w - 20),
-              (rect.x + 10, rect.y + 8), "small", tone)
+    named = draw_text(surface, assets,
+                      ellipsize(assets.font("small"), title, rect.w - 20),
+                      (rect.x + 10, rect.y + 8), "small", tone)
     if (assets.font("small").size(title)[0]
             + assets.font("tiny").size(status)[0] + 28) <= rect.w:
-        draw_text(surface, assets, status, (rect.right - 10, rect.y + 10),
+        draw_text(surface, assets, status, (rect.right - 10, named.centery),
                   "tiny", GOOD if locked else FAINT, right=True)
         first = rect.y + 32
     else:
@@ -3187,10 +3319,15 @@ def draw_trade(game):
 
     # The Confirm button commits the highlighted row, exactly as it does in
     # the shop - `trade` is in `SELECT_ONLY` for the reason recorded there.
-    button = pygame.Rect(left, rect.bottom - 78, min(260, list_w), 34)
+    # As wide as its longest label needs, from 260 (§94): "Take back your
+    # agreement" is exactly 260 with its padding in Consolas and past the
+    # edge in anything wider.
     row = rows[index] if rows else {"kind": "cancel"}
-    confirm_button(surface, assets, game, button,
-                   _trade_confirm_label(game, row))
+    label = _trade_confirm_label(game, row)
+    button = pygame.Rect(left, rect.bottom - 78,
+                         min(list_w, max(260, assets.font("body").size(
+                             label)[0] + 20)), 34)
+    confirm_button(surface, assets, game, button, label)
     key_hint(surface, assets,
              [("Left/Right", "Amount"), ("Shift", "One at a time"),
               ("Esc", "Call it off")],
@@ -3324,15 +3461,17 @@ def draw_class_select(game):
                           max(18, row_h - 6))
         row_highlight(surface, row, i == game.ui.class_index, cls.color,
                       game=game, kind="class", index=i)
-        draw_text(surface, assets, cls.name if unlocked else "? ? ?",
-                  (row.x + 14, row.y + (6 if two_lines
-                                        else max(1, (row.h - 19) // 2))),
-                  "body", cls.color if unlocked else FAINT)
+        named = draw_text(surface, assets, cls.name if unlocked else "? ? ?",
+                          (row.x + 14, row.y + (6 if two_lines
+                                                else max(1, (row.h - 19) // 2))),
+                          "body", cls.color if unlocked else FAINT)
         if unlocked and cls.archetype:
             # "Emberwright" does not tell you it is the mage. This does.
+            # Centred on the row when the row is two lines, on the name
+            # when it is one (§94).
             draw_text(surface, assets, cls.archetype,
-                      (row.right - 14, row.y + row.h // 2), "tiny", DIM,
-                      right=True)
+                      (row.right - 14, row.y + row.h // 2 if two_lines
+                       else named.centery), "tiny", DIM, right=True)
         if two_lines:
             draw_text(surface, assets, cls.title if unlocked else "locked",
                       (row.x + 14, row.y + 25), "tiny",
@@ -3625,7 +3764,13 @@ def draw_modifier_select(game):
         row_highlight(surface, row, i == game.ui.modifier_index, mod.color,
                       game=game, kind="modifier", index=i, chosen=picked)
         mark = "[-]" if held else ("[x]" if picked else "[ ]")
-        draw_text(surface, assets, "%s %s" % (mark, mod.name),
+        score = "x%.2f" % mod.score
+        # The name stops short of the multiplier, measured (§94) - at 390 a
+        # long name ran into it in any face wider than Consolas.
+        draw_text(surface, assets,
+                  ellipsize(assets.font("body"), "%s %s" % (mark, mod.name),
+                            row.w - 14 - 18 - 12
+                            - assets.font("small").size(score)[0]),
                   (row.x + 14, row.y + (4 if roomy else
                                         max(1, (row.h - 19) // 2))), "body",
                   mod.color if picked else INK)
@@ -3646,7 +3791,7 @@ def draw_modifier_select(game):
                       (row.x + 14,
                        row.bottom - assets.font("tiny").get_height() - 3),
                       "tiny", DIM)
-        draw_text(surface, assets, "x%.2f" % mod.score,
+        draw_text(surface, assets, score,
                   (row.right - 18, row.y + row.h // 2), "small",
                   ACCENT if picked else FAINT, right=True)
     scroll_note(surface, assets,
@@ -3911,7 +4056,13 @@ def scene_measure(game):
     # so `tests/layout.py` was right to pass it; it just looked like a
     # mistake. The panel now fits the measure the prose was written to, and
     # `TestSceneProseIsAllReadable` holds new writing to it.
-    box_w = min(660, width - 32)
+    #
+    # **And 66 columns of whatever face this is** (§94). 660 is 66 columns
+    # of Consolas and 60 of anything a tenth wider, which is every other
+    # candidate in `Assets.FONT_CANDIDATES` - so on a Mac the same forty
+    # lines re-wrapped. The larger of the two, so Consolas does not move.
+    box_w = min(max(660, game.assets.font("small").size("M" * 66)[0] + 60),
+                width - 32)
     wrapped = []
     for line in lines:
         wrapped.extend(wrap_text(line, game.assets.font("small"), box_w - 60)
@@ -3971,8 +4122,9 @@ def draw_scene(game):
         # to press rather than only that there is more, because an arrow
         # on its own is the kind of hint nobody reads.
         draw_text(surface, assets,
-                  "%d-%d of %d   Left and Right to read on"
-                  % (top + 1, min(top + capacity, len(wrapped)), len(wrapped)),
+                  range_note(assets.font("tiny"), top + 1,
+                             min(top + capacity, len(wrapped)), len(wrapped),
+                             box.w - 32),
                   (box.centerx, box.y + 56), "tiny", FAINT, center=True)
 
     y += 12
@@ -3983,8 +4135,20 @@ def draw_scene(game):
                       kind="scene", index=i)
         # A choice taken in some earlier run is marked, not hidden: seeing
         # what you did last time is the point of keeping the record.
-        draw_text(surface, assets, option.label, (row.x + 14, row.y + 8),
-                  "small", INK if i == state["index"] else DIM)
+        mark = ("?" if option.secret else
+                ("you said this" if state.get("replay") else "before")
+                if chosen_before else "")
+        room = row.w - 14 - (assets.font("tiny").size(mark)[0] + 26
+                             if mark else 14)
+        # **The answer steps down a size before it is cut** (§35, §94): it
+        # is the player's own line, and an ellipsis takes the end of what
+        # they are choosing to say.
+        size = fitting_size(assets, option.label, room)
+        font = assets.font(size)
+        draw_text(surface, assets, ellipsize(font, option.label, room),
+                  (row.x + 14, row.y + 8 if size == "small"
+                   else row.centery - font.get_height() // 2),
+                  size, INK if i == state["index"] else DIM)
         if option.secret:
             draw_text(surface, assets, "?", (row.right - 16, row.y + 16),
                       "small", ACCENT, right=True)
@@ -4086,9 +4250,12 @@ def draw_story(game):
         if option.key not in seen or y > floor:
             continue                  # never offered; it does not exist yet
         picked = option.key in taken
+        # Stepped down before it is cut, like the live scene's rows (§94).
+        answer = ("> " if picked else "  ") + option.label
+        size = fitting_size(assets, answer, card.w - 36)
         draw_text(surface, assets,
-                  ("> " if picked else "  ") + option.label, (x, y), "small",
-                  INK if picked else FAINT)
+                  ellipsize(assets.font(size), answer, card.w - 36), (x, y),
+                  size, INK if picked else FAINT)
         y += 20
         if picked:
             for line in option.reply:
@@ -4645,8 +4812,12 @@ def draw_join_code(game):
     draw_text(surface, assets, shown[:5] + "  " + shown[5:],
               (rect.centerx, rect.centery - 20), "big", ACCENT, center=True)
     message = game.ui.lobby_notice or "Ten characters, as your friend read them out."
-    draw_text(surface, assets, message, (rect.centerx, rect.centery + 30),
-              "tiny", BAD if game.ui.lobby_notice else FAINT, center=True)
+    # Wrapped, because a notice is whatever the network said (§94).
+    for n, line in enumerate(wrap_text(message, assets.font("tiny"),
+                                       rect.w - 40)[:3]):
+        draw_text(surface, assets, line,
+                  (rect.centerx, rect.centery + 30 + n * 16), "tiny",
+                  BAD if game.ui.lobby_notice else FAINT, center=True)
 
 
 def draw_achievements(game):
@@ -4760,12 +4931,40 @@ def draw_records(game):
     # did not, and on a short window it wrote nine stats and eight classes
     # straight off the screen.
     floor = rect.bottom - 34
+    # Beside the stats on a wide frame, under them on a narrow one. At 390
+    # the "right" column worked out to the *left* of the left one, which is
+    # what a subtraction does when it runs out of room.
+    stacked = is_narrow(rect)
+    right = rect.x + 40 if stacked else min(rect.x + 470, rect.right - 300)
+    # **The value column is measured, not 280** (§94). A board line per
+    # mode per party size made the labels long enough to run into their
+    # own scores - `The Long Night, 2 players` against a seven-digit one -
+    # and the column only moves when that would happen, so a short board
+    # sits exactly where it always did.
+    small = assets.font("small")
+    need = (max(small.size(label)[0] for label, _v in stats) + 16
+            + max(small.size(str(value))[0] for _l, value in stats))
+    limit = (rect.right - 40) if stacked else (right - 24)
+    value_x = left + max(280, min(need, limit - left))
     for label, value in stats:
         if y > floor:
             break
-        draw_text(surface, assets, label, (left, y), "small", DIM)
-        draw_text(surface, assets, str(value), (left + 280, y), "small", INK,
-                  right=True)
+        value = str(value)
+        room = value_x - left - small.size(value)[0] - 12
+        # The party size is what tells two board lines apart, and it is
+        # the end of the label - the first thing an ellipsis takes. So a
+        # label that does not fit says `2p` before it says anything less.
+        if small.size(label)[0] > room:
+            label = label.replace(" players", "p")
+        if small.size(label)[0] > room and label.startswith("The "):
+            label = label[4:]
+        # **`right=True` anchors on the vertical centre** (§7), so the
+        # value takes its height from the label's own box. Given the same
+        # `y` it sat half a line above every label on the screen.
+        drawn = draw_text(surface, assets, ellipsize(small, label, room),
+                          (left, y), "small", DIM)
+        draw_text(surface, assets, value, (value_x, drawn.centery), "small",
+                  INK, right=True)
         y += 26
 
     if y + 24 <= floor:
@@ -4787,11 +4986,6 @@ def draw_records(game):
                       (left + 130, y), "tiny", DIM if unlocked else FAINT)
             y += 20
 
-    # Beside the stats on a wide frame, under them on a narrow one. At 390
-    # the "right" column worked out to the *left* of the left one, which is
-    # what a subtraction does when it runs out of room.
-    stacked = is_narrow(rect)
-    right = rect.x + 40 if stacked else min(rect.x + 470, rect.right - 300)
     ry = (y + 24) if stacked else (rect.y + 96)
     draw_text(surface, assets, "RECENT ROADS", (right, ry), "small", ACCENT)
     ry += 26
@@ -4821,17 +5015,18 @@ def draw_records(game):
             title = _modes.depth_label(record.mode,
                                        record.waves) or "unfinished"
         mid_x = right + min(150, max(70, (rect.right - 40 - right) // 2))
-        draw_text(surface, assets,
-                  ellipsize(tiny, "%-12s L%-2d" % (cls.name, record.level),
-                            mid_x - right - 8),
-                  (right, ry), "tiny", cls.color)
+        drawn = draw_text(surface, assets,
+                          ellipsize(tiny, "%-12s L%-2d"
+                                    % (cls.name, record.level),
+                                    mid_x - right - 8),
+                          (right, ry), "tiny", cls.color)
         draw_text(surface, assets,
                   ellipsize(tiny, title,
                             rect.right - 48 - tiny.size(score)[0] - mid_x),
                   (mid_x, ry), "tiny",
                   ACCENT if (ending or record.mode == "waves") else FAINT)
-        draw_text(surface, assets, score, (rect.right - 40, ry), "tiny", DIM,
-                  right=True)
+        draw_text(surface, assets, score, (rect.right - 40, drawn.centery),
+                  "tiny", DIM, right=True)
         ry += 20
 
 

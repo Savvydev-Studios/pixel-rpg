@@ -138,6 +138,10 @@ class Assets:
     """Lazily-built, cached art. One instance lives on the Game object."""
 
     FONT_CANDIDATES = "consolas,dejavusansmono,couriernew,menlo,monospace"
+    #: A font file to use instead of asking the system. **Only the checker
+    #: sets it** (`tests/layout.py --font PATH`), so a session on a machine
+    #: without Consolas can still measure against a named face (§94).
+    FONT_PATH = None
 
     def __init__(self, tile_size=32):
         self.tile_size = tile_size
@@ -152,7 +156,7 @@ class Assets:
         # is the obvious pixel face and it is **caps-only**, which turns
         # every warden's epitaph into shouting. Not worth it. If one is ever
         # bundled it needs real lowercase and roughly Consolas' metrics.
-        path = pygame.font.match_font(self.FONT_CANDIDATES)
+        path = self.FONT_PATH or pygame.font.match_font(self.FONT_CANDIDATES)
         self.font_path = path
         self.font_name = (os.path.basename(path) if path
                           else "pygame default")

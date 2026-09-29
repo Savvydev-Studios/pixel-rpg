@@ -18451,6 +18451,177 @@ class TestTheInputFuzzerItself(unittest.TestCase):
         self.assertIn("spoils", fuzz.SCENARIOS)
         self.assertIn("picker", fuzz.SCENARIOS)
 
+    def test_it_is_put_on_the_long_roads_screens_too(self):
+        """s94. 43,200 events never reached the shop, the smith, falling,
+        a new skill, a full bag, a chapter card or the Door. Each scenario
+        has to land where it says, or it is coverage in name only."""
+        import random
+        fuzz = self.fuzzer()
+        _display_only()
+        self.assertLessEqual(fuzz.STORY_SCENARIOS, set(fuzz.SCENARIOS))
+        lands = {"shop": "shop", "smith": "smith", "gameover": "gameover",
+                 "newskill": "newskill", "fullbag": "fullbag",
+                 "chapter": "chaptercard", "ending": "endingchoice"}
+        was = fuzz.SCENARIOS
+        try:
+            for scenario, state in sorted(lands.items()):
+                fuzz.SCENARIOS = (scenario,)
+                game, _where = fuzz.fresh(random.Random(7), (1280, 720))
+                self.assertEqual(game.state, state, scenario)
+        finally:
+            fuzz.SCENARIOS = was
+
+    def test_it_only_counts_screens_that_exist(self):
+        """`battle.MENU` and `battle.SUBMENU` are phases of a fight that
+        `game.py` imports, and the coverage report listed them as screens
+        it never reached. Read from the source, the list is the states."""
+        fuzz = self.fuzzer()
+        states = fuzz.known_states()
+        self.assertNotIn("menu", states)
+        self.assertNotIn("submenu", states)
+        for state in ("overworld", "shop", "endingchoice", "trade"):
+            self.assertIn(state, states)
+
+
+
+class TestTextIsMeasuredNotAssumed(unittest.TestCase):
+    """s94. The layout fit one face, and the first cloud session had another.
+
+    **Every number here used to be a width somebody measured once in
+    Consolas** - 660 for the scene panel, 260 for a button, 280 for a
+    value column, seven pixels a letter for a skill chip. Consolas is on
+    his PC and nowhere else: a Linux container hands back FreeMono, a Mac
+    Menlo, and both are a tenth wider. These are the decisions that
+    replaced the constants.
+    """
+
+    def setUp(self):
+        _display_only()
+        from pixel_rpg.assets import Assets
+        self.assets = Assets()
+
+    def test_a_range_note_keeps_its_range_at_every_width(self):
+        """The range answers "is there more"; the hint only says which key.
+        So the hint shortens and then goes, and the range never does."""
+        from pixel_rpg.menus import range_note
+        font = self.assets.font("tiny")
+        span = "1-21 of 24"
+        full = range_note(font, 1, 21, 24, 2000)
+        self.assertEqual(full, span + "   Left and Right to read on")
+        for width in range(font.size(span)[0], font.size(full)[0] + 1, 3):
+            note = range_note(font, 1, 21, 24, width)
+            self.assertTrue(note.startswith(span), (width, note))
+            self.assertLessEqual(font.size(note)[0], width, note)
+        short = range_note(font, 1, 21, 24,
+                           font.size(span + "   Left/Right")[0])
+        self.assertEqual(short, span + "   Left/Right")
+
+    def test_a_label_steps_down_a_size_before_it_is_cut(self):
+        """s35's rule for rows, as one call: the largest face that fits."""
+        from pixel_rpg.menus import fitting_size
+        text = "Put your hands where hers were"
+        small = self.assets.font("small").size(text)[0]
+        tiny = self.assets.font("tiny").size(text)[0]
+        self.assertLess(tiny, small)
+        self.assertEqual(fitting_size(self.assets, text, small), "small")
+        self.assertEqual(fitting_size(self.assets, text, small - 1), "tiny")
+        self.assertEqual(fitting_size(self.assets, text, tiny - 1), "tiny",
+                         "nothing fits: the smallest, and the caller cuts")
+
+    def test_the_scene_panel_is_66_columns_of_whatever_face_this_is(self):
+        """660 was 66 columns of Consolas and 60 of anything wider, so the
+        hand-broken prose re-wrapped on every machine but his. Never
+        narrower than 660, so on Consolas nothing moves."""
+        from pixel_rpg import game as G
+        from pixel_rpg import menus
+        from pixel_rpg import scenes as scenes_mod
+        game = G.Game()
+        game.screen = pygame.display.set_mode((1600, 900))
+        scene = scenes_mod.SCENES_BY_KEY["prologue"]
+        game.scene = {"scene": scene, "options": list(scene.choices),
+                      "index": 0, "phase": "choosing", "reply": (),
+                      "after": None, "scroll": 0}
+        box, _wrapped, _capacity, _rows = menus.scene_measure(game)
+        self.assertGreaterEqual(box.w, 660)
+        self.assertGreaterEqual(
+            box.w - 60, game.assets.font("small").size("M" * 66)[0])
+
+    def test_a_pinned_font_is_the_font_that_is_used(self):
+        """`tests/layout.py --font` is only worth anything if the game then
+        measures in the face it was pointed at."""
+        from pixel_rpg.assets import Assets
+        path = os.path.join(os.path.dirname(pygame.__file__),
+                            pygame.font.get_default_font())
+        self.assertTrue(os.path.isfile(path), path)
+        was = Assets.FONT_PATH
+        try:
+            Assets.FONT_PATH = path
+            self.assertEqual(Assets().font_path, path)
+        finally:
+            Assets.FONT_PATH = was
+        self.assertIsNone(Assets.FONT_PATH, "the game itself never pins one")
+
+    def test_the_layout_checker_can_see_a_value_off_its_line(self):
+        """The askew rule is in `layout.py --selftest`, which is in the
+        gate - this only guards that the self-test still names it, so a
+        refactor cannot drop the case and keep the green."""
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "tests", "layout.py")) as handle:
+            source = handle.read()
+        self.assertIn('"ASKEW", value_half_a_line_high', source)
+        self.assertIn('"quests active"', source)
+
+
+class TestTheDoorStartsOnYourEnding(unittest.TestCase):
+    """s94. Mechanism 1 of s33, the design he invented: **choices lean;
+    they never pick**, and *"the Door simply starts your cursor on
+    whichever is heaviest."*
+
+    `offer_ending_menu` found the heaviest ending, put the cursor on it -
+    and then set it to 0 on the next line. `leading_ending` had a test and
+    the cursor did not, so the half that the player can see was the half
+    that never happened.
+    """
+
+    def door(self, leanings):
+        from pixel_rpg import game as G
+        from pixel_rpg import story
+        _display_only()
+        game = G.Game()
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "warden"
+        game.new_run("Leaner", 6)
+        game.dialogue = None
+        for entry in story.CODEX:
+            game.meta.unlock_codex(entry.key)
+        for portal in game.world.portals:
+            portal.defeated = True
+        game.player.leanings = dict(leanings)
+        game.offer_ending_menu()
+        self.addCleanup(game.saves.delete, 6)
+        return game
+
+    def test_the_cursor_starts_on_the_heaviest_ending(self):
+        probe = self.door({})
+        keys = [option.key for option in probe.ending_options]
+        self.assertGreaterEqual(len(keys), 2, keys)
+        for leaning in keys[1:]:
+            game = self.door({leaning: 5})
+            self.assertEqual(
+                game.ending_options[game.ui.ending_index].key, leaning,
+                "leaning %s, the cursor started on %s"
+                % (leaning, game.ending_options[game.ui.ending_index].key))
+
+    def test_no_answers_start_it_at_the_top(self):
+        game = self.door({})
+        self.assertEqual(game.ui.ending_index, 0)
+
+    def test_leaning_toward_one_that_is_not_offered_starts_at_the_top(self):
+        """A lean can point at an ending the Door is not offering this
+        time - the default has to survive that, which is exactly the
+        line that was in the wrong place."""
+        game = self.door({"no such ending": 9})
+        self.assertEqual(game.ui.ending_index, 0)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
