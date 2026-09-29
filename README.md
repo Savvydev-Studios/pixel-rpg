@@ -455,3 +455,11 @@ Two ways to bring it:
   `bash run.sh`; on macOS, run from source.
 - Windows may warn about an unsigned executable the first time; the build is
   unsigned because code-signing certificates cost money.
+
+---
+
+## License
+
+**All rights reserved.** This repository is public so it can be seen, not
+so it can be reused: nothing here may be copied, modified or redistributed
+without permission from Savvydev-Studios. See [`LICENSE`](LICENSE).

@@ -1,0 +1,18 @@
+Copyright (c) 2026 Savvydev-Studios. All rights reserved.
+
+Pixel RPG - its code, story, characters, artwork, sounds and every other
+part of this repository - is not open source.
+
+The repository is public so that people can see it. Being able to see it
+does not give anybody permission to use it. Without written permission
+from Savvydev-Studios, you may not copy, modify, redistribute, publish,
+sell, or build other work from any part of it, in whole or in part.
+
+GitHub's Terms of Service let other GitHub users view this repository and
+fork it on GitHub. That is the only use permitted, and a fork carries no
+other rights.
+
+Third-party software the game uses (Python, pygame, SDL and the rest)
+keeps its own license and is not covered by this notice.
+
+To ask for permission, open an issue on this repository.
