@@ -29,8 +29,10 @@ from source.
 **Nothing to install but the game.** Python, pygame and SDL are built into
 it, the same as the Windows exe.
 
-1. Turn on Linux: **Settings > About ChromeOS > Developers > Linux
-   development environment**. School-managed Chromebooks usually have this
+1. Turn on Linux: **Settings > About ChromeOS > Developers**, then
+   **Set up** next to *Linux development environment*, and follow the
+   steps. When it finishes a Terminal window opens - close it, the game
+   does not need it. School-managed Chromebooks usually have this
    switched off; if the button is missing or greyed out, see *In a
    browser* below instead.
 2. From the repository's **Releases**, download the `.deb` for your
