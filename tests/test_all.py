@@ -19396,6 +19396,39 @@ class TestAWaysideAnswersE(unittest.TestCase):
             kind, _target = game.world.interactable_near(gx, gy)
             self.assertIsNotNone(kind, "%s at %r answers nothing" % (prop, (gx, gy)))
 
+    def test_every_thing_and_every_door_can_be_reached_by_e(self):
+        """**Answering is not enough; it has to be *you* it answers.**
+        The scan returns its first match, so a thing is only usable if
+        some tile you can stand on finds *it* before anything else. This
+        is the sweep that found the trader behind Maren (4.41.8) - 6,106
+        things on 40 islands when it was written, every one reachable."""
+        from pixel_rpg.world import World, PROP_INTERACT
+        for seed in range(1, 13):
+            world = World(32, seed)
+            things = [(prop, spot) for spot, prop in world.props.items()
+                      if prop in PROP_INTERACT and prop != "chest_open"]
+            things += [("door:" + kind, spot)
+                       for spot, kind in world.doors.items()]
+            for prop, (tx, ty) in things:
+                reached = False
+                for dx in (-1, 0, 1):
+                    for dy in (-1, 0, 1):
+                        x, y = tx + dx, ty + dy
+                        if not world.in_bounds(x, y) or world.blocked(x, y):
+                            continue
+                        kind, target = world.interactable_near(x, y)
+                        if target is None:
+                            continue
+                        if kind == "door":
+                            at = target[0]
+                        elif hasattr(target, "gx"):
+                            at = (target.gx, target.gy)
+                        else:
+                            at = tuple(target)
+                        reached = reached or at == (tx, ty)
+                self.assertTrue(reached, "seed %d: %s at %r cannot be used"
+                                % (seed, prop, (tx, ty)))
+
 class TestTheShrineSaysWhatItTook(unittest.TestCase):
     """s96. The prompt said 23g; the toast after it said -25."""
 
