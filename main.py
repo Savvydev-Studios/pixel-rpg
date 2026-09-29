@@ -68,6 +68,15 @@ def selftest(report_path=None):
         assert hasattr(_video, "Window")
         lines.append("window module present")
 
+        # Sound is optional in play: no sound card, or no library the mixer
+        # loads, gets a silent game rather than a crash (s96, 4.44.1). Which
+        # makes a build that lost its mixer look exactly like a healthy
+        # one - so ask here, inside the build, on the dummy driver, which
+        # always has a device.
+        from pixel_rpg.audio import Audio
+        assert Audio(True, 0.0).available, "the sound mixer did not load"
+        lines.append("sound mixer present")
+
         # The second transport, checked where it counts. `websock` is a
         # plain top-level import so PyInstaller should see it - but the
         # gamepad module was "should be fine" too, and shipped missing for a
