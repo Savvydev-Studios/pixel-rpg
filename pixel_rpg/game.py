@@ -43,7 +43,7 @@ from .quests import ACHIEVEMENTS as _ACHIEVEMENTS, QuestLog
 
 def quest_achievements():
     return _ACHIEVEMENTS
-from .save import (GuestVault, SaveManager, build_payload,
+from .save import (SLOT_COUNT, GuestVault, SaveManager, build_payload,
                    deserialize_player, format_playtime, serialize_player)
 from .ui import (ACCENT, BAD, DIM, GOOD, INK, Fade, FloatingTextLayer,
                 ShotLayer,
@@ -7858,6 +7858,9 @@ class Game:
         # Together did before 2026-08-23.
         "arena": (None, "arena_index"),
     }
+    # A tab and the list it fills. Changing the tab puts that list's
+    # cursor back to the top, whichever way it was changed.
+    TAB_LISTS = {"inv_tab": "inv", "quest_tab": "quest", "codex_tab": "codex"}
     LIST_FIELDS = {"inv": "inv", "shop": "shop", "smith": "smith",
                    "quest": "quest", "codex": "codex", "slot": "slot",
                    "story": "story", "feat": "feats"}
@@ -7923,7 +7926,20 @@ class Game:
             self.ui.smith.index = self.ui.smith.offset = 0
             return True
         if kind == "shop_tab":
-            self.ui.shop_mode = "buy" if index == 0 else "sell"
+            mode = "buy" if index == 0 else "sell"
+            if self.ui.shop_mode != mode:
+                self.ui.shop_mode = mode
+                self.ui.shop.index = self.ui.shop.offset = 0
+            return True
+        if kind in self.TAB_LISTS:
+            # **A clicked tab starts its list at the top, as Tab does**
+            # (s96). It kept the old row: row six of one chapter, clicked
+            # over to a chapter of five, was a cursor past the end until
+            # the next draw - and an Enter before that draw raised.
+            cursor = getattr(self.ui, self.TAB_LISTS[kind])
+            if getattr(self.ui, kind) != index:
+                setattr(self.ui, kind, index)
+                cursor.index = cursor.offset = 0
             return True
         if kind in self.CURSOR_FIELDS:
             game_attr, ui_attr = self.CURSOR_FIELDS[kind]
@@ -8118,6 +8134,25 @@ class Game:
                 SMITH: self.ui.smith, QUESTS: self.ui.quest,
                 CODEX: self.ui.codex, SLOTS: self.ui.slot}
 
+    def scroll_length(self):
+        """How many rows the list under the wheel has - each screen's
+        own handler counts them the same way. None when there is nothing
+        to count them from."""
+        state, ui = self.state, self.ui
+        if state == SLOTS:
+            return SLOT_COUNT
+        if state == CODEX:
+            return len(menus.codex_rows(self))
+        if self.player is None:
+            return None
+        if state == INVENTORY:
+            if ui.inv_tab == 4:
+                return len(menus.consumable_rows(self.player))
+            return len(menus.filtered_inventory(self.player, ui.inv_tab))
+        rows = {SHOP: menus.shop_rows, SMITH: menus.smith_rows,
+                QUESTS: menus.quest_rows}
+        return len(rows[state](self))
+
     def mouse_scroll(self, amount):
         """The wheel moves whatever the arrow keys move.
 
@@ -8146,6 +8181,14 @@ class Game:
         if target is not None:
             target.offset = max(0, target.offset - amount)
             target.index = int(clamp(target.index - amount, 0, 10 ** 6))
+            # **Inside the list, now, not at the next draw** (s96). The
+            # draw clamps the cursor and every handler trusts it had: a
+            # notch past the end and an Enter in the same frame - one
+            # flick of a trackpad - read the codex one row past its last
+            # and raised. The UI fuzzer found it at wheel, wheel, Enter.
+            count = self.scroll_length()
+            if count is not None:
+                target.clamp_to(count)
             self.sfx("move", volume=0.4, throttle=0.03)
             return
         # **One notch is one row, however far the wheel was rolled.** A

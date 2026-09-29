@@ -352,6 +352,13 @@ def one_round(seed, events=120, seen=None):
                             % (where, game.state, moved))
             for line in hotspots_are_usable(game):
                 raise Fault("%s (%s): %s" % (where, game.state, line))
+            # **A frame, as after any click** (s96). The sweep points the
+            # cursor at every hotspot on screen with no draw between - the
+            # codex's five tabs and then *the previous tab's* six rows,
+            # leaving row six selected in a chapter of five. No hand can
+            # do that; the next press then found a cursor the draw would
+            # have put back, and raised.
+            game.draw()
         for line in cursors_are_sane(game):
             raise Fault("%s: %s" % (where, line))
         seen[game.state] = seen.get(game.state, 0) + 1

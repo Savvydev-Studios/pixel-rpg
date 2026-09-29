@@ -19042,6 +19042,77 @@ class TestAHeldArrowRunsDownAMenu(unittest.TestCase):
 
 
 
+
+class TestTheWheelStaysInsideTheList(unittest.TestCase):
+    """s96. The UI fuzzer: wheel, wheel, Enter on the codex -> IndexError.
+
+    The wheel moved a list's cursor with no upper bound and left the draw
+    to put it back; every handler indexes its rows with it directly. Two
+    events in one frame - a trackpad flick and Enter - landed between.
+    """
+
+    def test_sixty_notches_then_enter_on_every_wheeled_list(self):
+        from pixel_rpg import game as G
+        from pixel_rpg.items import roll_item
+        _display_only()
+        game = G.Game()
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "warden"
+        game.new_run("Wheeler", 6)
+        game.dialogue = None
+        self.addCleanup(game.saves.delete, 6)
+        for _ in range(3):
+            game.player.add_item(roll_item(game.player.level + 3))
+        game.meta.unlock_codex(story_first_codex_key())
+        enter = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN,
+                                   unicode="", mod=0)
+        for state in (G.INVENTORY, G.SHOP, G.SMITH, G.QUESTS, G.CODEX,
+                      G.SLOTS):
+            game.state = G.OVERWORLD
+            game.dialogue = None
+            game.reading = None
+            game.go(state)
+            if state == G.SHOP:
+                game.ui.refresh_shop(game.player, game.world)
+            window = game.scroll_windows()[state]
+            window.index = window.offset = 0
+            for _ in range(60):
+                game.mouse_scroll(-1)
+            count = game.scroll_length()
+            self.assertLess(window.index, max(1, count), state)
+            self.assertGreaterEqual(window.index, 0, state)
+            if state == G.SLOTS:
+                continue                # Enter there loads a run
+            game.handle_event(enter)    # raised on the codex
+
+
+    def test_a_clicked_tab_starts_its_list_at_the_top_like_tab_does(self):
+        from pixel_rpg import game as G
+        _display_only()
+        game = G.Game()
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "warden"
+        game.new_run("Tabber", 6)
+        self.addCleanup(game.saves.delete, 6)
+        for tab, cursor in (("codex_tab", "codex"), ("inv_tab", "inv"),
+                            ("quest_tab", "quest")):
+            window = getattr(game.ui, cursor)
+            setattr(game.ui, tab, 0)
+            window.index, window.offset = 5, 2
+            self.assertTrue(game.point_cursor(tab, 0))     # the same tab
+            self.assertEqual((window.index, window.offset), (5, 2), tab)
+            self.assertTrue(game.point_cursor(tab, 1))     # another one
+            self.assertEqual(getattr(game.ui, tab), 1, tab)
+            self.assertEqual((window.index, window.offset), (0, 0), tab)
+        game.ui.shop_mode = "buy"
+        game.ui.shop.index = 4
+        game.point_cursor("shop_tab", 1)
+        self.assertEqual((game.ui.shop_mode, game.ui.shop.index), ("sell", 0))
+
+def story_first_codex_key():
+    from pixel_rpg import story
+    return story.CODEX[0].key
+
 class TestTheShrineSaysWhatItTook(unittest.TestCase):
     """s96. The prompt said 23g; the toast after it said -25."""
 
