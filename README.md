@@ -42,6 +42,10 @@ cd pixel-rpg-*/
 bash run.sh
 ```
 
+**Do not double-click `run.sh` in the Files app** - that only opens it in
+the browser as text. It has to be started from the Terminal, as above.
+No Terminal app in the launcher means Linux is not turned on yet.
+
 The first run installs what it needs (a minute or two, once); after that
 `bash run.sh` just starts the game. Saves live in
 `~/.local/share/Pixel_RPG`, not in the folder, so a newer download
