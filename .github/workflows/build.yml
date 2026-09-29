@@ -43,11 +43,13 @@ jobs:
   linux:
     strategy:
       fail-fast: false
-      # ARM runners (for ARM Chromebooks) are free on a public repository
-      # only, so a private one builds Intel/AMD alone rather than queue
-      # for a machine that never comes.
+      # Intel/AMD Chromebooks and ARM ones (MediaTek, Snapdragon). ARM
+      # runners were public-repository-only until 2026-01-29; since then a
+      # private repository gets them too, from its free minutes (s96).
       matrix:
-        include: ${{ fromJSON(github.event.repository.private && '[{"runner":"ubuntu-24.04","arch":"amd64"}]' || '[{"runner":"ubuntu-24.04","arch":"amd64"},{"runner":"ubuntu-24.04-arm","arch":"arm64"}]') }}
+        include:
+          - { runner: ubuntu-24.04, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
     runs-on: ${{ matrix.runner }}
     # Built inside Debian 12, because that is what a Chromebook's Linux is:
     # a one-file build runs on the system it was built on and anything
