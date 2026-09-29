@@ -21,6 +21,30 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+#: The actions a page names by their key, as `{action}` in its text.
+#: `{walk}` is the four walking keys together.
+NAMED_KEYS = ("interact", "sprint", "map", "hero", "quests", "trade", "save")
+
+
+def key_words(binds):
+    """What the guide calls each key: **yours, not the defaults** (s96).
+
+    It said "E", "M", "(C)", "J", "T" and "F5" in so many words, so
+    anyone who rebound a key was taught the wrong one by the page that
+    exists to teach it. The labels are the Controls screen's own.
+    """
+    words = {action: binds.label_for(action) for action in NAMED_KEYS}
+    walk = [binds.label_for(a) for a in ("up", "left", "down", "right")]
+    words["walk"] = ("".join(walk) if all(len(w) == 1 for w in walk)
+                     else " / ".join(walk))
+    return words
+
+
+def with_keys(line, binds):
+    """One line of a page with its keys filled in."""
+    return line.format_map(key_words(binds)) if "{" in line else line
+
+
 @dataclass(frozen=True)
 class GuidePage:
     title: str
@@ -29,18 +53,18 @@ class GuidePage:
 
 PAGES = [
     GuidePage("Getting around", (
-        "WASD or the arrow keys walk. Hold Shift to move quickly.",
+        "{walk} or the arrow keys walk. Hold {sprint} to move quickly.",
         "",
-        "E interacts with whatever you are standing next to: a chest, a",
-        "person, a shrine, a shop door, or an arena gate.",
+        "{interact} interacts with whatever you are standing next to: a",
+        "chest, a person, a shrine, a shop door, or an arena gate.",
         "",
         "Doors open. Knock on a house and you go in - there is a room, a",
         "fire and somebody's things, and the same key by the door takes",
         "you back out. Nothing indoors is yours to take.",
         "",
-        "M opens the map. The corner minimap shows your neighbourhood; the",
-        "full map shows the island, and only the parts you have been to or",
-        "surveyed from a tower.",
+        "{map} opens the map. The corner minimap shows your neighbourhood;",
+        "the full map shows the island, and only the parts you have been to",
+        "or surveyed from a tower.",
         "",
         "The mouse works everywhere in menus. Hovering lights a row up,",
         "left-clicking selects it. Anything spending gold or changing your",
@@ -56,7 +80,7 @@ PAGES = [
     )),
     GuidePage("Your character", (
         "Levels come from fighting, up to level 100. Each one gives points",
-        "to spend on the hero screen (C), and no attribute goes past 60.",
+        "to spend on the hero screen ({hero}), and no attribute goes past 60.",
         "",
         "  Might      +2 attack            Ferocity   +1% crit damage",
         "  Vigor      +8 maximum health    Guard      +1 defence",
@@ -68,7 +92,7 @@ PAGES = [
         "MP. A Warden sweeps into a second enemy, a Cutpurse lands two",
         "quick hits instead of one heavy one, an Archer finds the gap in",
         "their guard, and a mage puts something other than steel behind",
-        "it. The hero screen (C) says which one is yours.",
+        "it. The hero screen ({hero}) says which one is yours.",
         "",
         "Speed decides who acts first in a battle. Points are permanent",
         "unless you pay to take them all back - R on the hero screen, for a",
@@ -136,7 +160,7 @@ PAGES = [
         "",
         "The card on the right compares whatever you have selected against",
         "what you are already wearing - green is an improvement, red is not.",
-        "The hero screen (C) lists the three pieces you have on and what",
+        "The hero screen ({hero}) lists the three pieces you have on and what",
         "each of them adds.",
         "",
         "Relics are permanent passives. They stack, they cannot be lost,",
@@ -193,8 +217,8 @@ PAGES = [
         "A favour is settled where you stand - a question, a riddle, or",
         "something out of your bag. Answer and it is done, either way.",
         "",
-        "J opens your own notes: the story so far, what you have taken on,",
-        "and how far along you are. An arrow at the edge of the screen",
+        "{quests} opens your own notes: the story so far, what you have taken",
+        "on, and how far along you are. An arrow at the edge of the screen",
         "points at whatever comes next.",
         "",
         "Quests and errands only count what you do after accepting them.",
@@ -213,12 +237,12 @@ PAGES = [
         "",
         "Fights are shared, but nobody is dragged into one. Standing close",
         "enough gets you asked, and you have a few seconds to say yes with",
-        "E. Experience and gold split evenly between everyone who fought.",
-        "Monsters are tougher with more of you, and they lean toward",
+        "{interact}. Experience and gold split evenly between everyone who",
+        "fought. Monsters are tougher with more of you, and they lean toward",
         "whoever is hurt.",
         "",
-        "T trades with whoever you are standing next to. Both of you put",
-        "up gold, gear and potions - anything at all, including what you",
+        "{trade} trades with whoever you are standing next to. Both of you",
+        "put up gold, gear and potions - anything at all, including what you",
         "are wearing - and nothing moves until you have both agreed to it.",
         "Changing your side of the table un-agrees both of you, so the",
         "offer you said yes to is always the offer you get.",
@@ -299,6 +323,9 @@ PAGES = [
         "",
         "WASD walks. Space swings. Shift dodges. 1 to 4 hold one of your",
         "four abilities for your next swing.",
+        "",
+        "These fights are played on the keyboard. A controller and a touch",
+        "screen do not reach them yet - the stick will not walk you here.",
         "",
         "A swing is an arc in front of you, not a target you picked.",
         "Whatever is inside it when you press Space takes the hit, and",
@@ -392,8 +419,8 @@ PAGES = [
         "otherwise nothing at all. The rest are scattered, off the roads,",
         "to be found rather than passed.",
         "",
-        "Walk up and press E. Each one offers a few things you could do",
-        "and none of them is the right answer - sitting at a fire mends",
+        "Walk up and press {interact}. Each one offers a few things you could",
+        "do and none of them is the right answer - sitting at a fire mends",
         "you, paying the toll-stone buys you what is under it, and",
         "walking on is always there and is never the wrong choice.",
         "",
@@ -435,7 +462,7 @@ PAGES = [
         "health, damage and rewards.",
         "",
         "The game saves to twelve slots, automatically as you play and",
-        "whenever you press F5. Saves live outside the game folder, so",
+        "whenever you press {save}. Saves live outside the game folder, so",
         "they survive reinstalling. One Sitting is the one exception,",
         "and it says so.",
         "",

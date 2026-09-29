@@ -5103,6 +5103,7 @@ def guide_measure(game, index=None):
             buffer.clear()
 
     for line in page.lines:
+        line = guide.with_keys(line, game.binds)
         if not line:
             flush()
             paragraphs.append("")

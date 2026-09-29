@@ -19113,6 +19113,49 @@ def story_first_codex_key():
     from pixel_rpg import story
     return story.CODEX[0].key
 
+
+class TestTheGuideNamesYourKeys(unittest.TestCase):
+    """s96. The guide said E, M, (C), J, T and F5 whatever you had bound."""
+
+    def text(self, game):
+        from pixel_rpg import guide, menus
+        return [" ".join(menus.guide_measure(game, i)[0])
+                for i in range(len(guide.PAGES))]
+
+    def game(self):
+        from pixel_rpg import game as G
+        _display_only()
+        game = G.Game()
+        game.screen = pygame.display.set_mode((1280, 720))
+        return game
+
+    def test_the_defaults_read_as_they_always_did(self):
+        pages = self.text(self.game())
+        whole = " ".join(pages)
+        self.assertIn("WASD or the arrow keys walk. Hold Shift to move "
+                      "quickly.", whole)
+        self.assertIn("E interacts with whatever you are standing next "
+                      "to", whole)
+        self.assertIn("M opens the map.", whole)
+        self.assertIn("the hero screen (C)", whole)
+        self.assertIn("whenever you press F5.", whole)
+
+    def test_a_rebound_key_is_the_one_it_names(self):
+        game = self.game()
+        game.binds.rebind("interact", pygame.K_f)
+        game.binds.rebind("map", pygame.K_k)
+        game.binds.rebind("up", pygame.K_i)
+        whole = " ".join(self.text(game))
+        self.assertIn("F interacts with", whole)
+        self.assertIn("K opens the map.", whole)
+        self.assertIn("IASD or the arrow keys walk.", whole)
+        self.assertNotIn("E interacts", whole)
+
+    def test_no_page_is_left_with_a_blank_to_fill(self):
+        for page in self.text(self.game()):
+            self.assertNotIn("{", page)
+            self.assertNotIn("}", page)
+
 class TestTheShrineSaysWhatItTook(unittest.TestCase):
     """s96. The prompt said 23g; the toast after it said -25."""
 
