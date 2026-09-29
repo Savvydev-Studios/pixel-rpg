@@ -19955,10 +19955,17 @@ class TestAPayoutAsksItsQuestions(unittest.TestCase):
         self.assertEqual(game.state, G.FULLBAG,
                          "the loot's question was walked past")
         prize = game.ui.fullbag["item"]
-        self.escape(game)                    # leave it behind
+        # **One question per piece of loot**, and a warden with company
+        # drops more than one - the first version of this test assumed a
+        # single item and failed whenever the encounter had adds.
+        asked = 0
+        while game.state == G.FULLBAG and asked < 10:
+            self.escape(game)                # leave it behind
+            asked += 1
+        self.assertGreaterEqual(asked, 1)
         self.assertNotIn(prize, game.player.inventory)
         self.assertEqual(game.state, G.CHAPTER_CARD,
-                         "the card should follow the question")
+                         "the card should follow the questions")
         self.assertIsNone(game.ui.fullbag)
 
     def carrying_four(self, game):
@@ -20050,6 +20057,92 @@ class TestAPayoutAsksItsQuestions(unittest.TestCase):
         game.clear_run()
         self.assertEqual(game.questions, [])
         self.assertIsNone(game.ui.fullbag)
+
+
+class TestTheStoryAgreesWithItself(unittest.TestCase):
+    """s96, 0cn. The story said Vell blinded herself in the ninth year in
+    her Memory and in both of her town's scenes, and in the first year in
+    her death scene - four tellings of one act, and one of them wrong."""
+
+    ORDINALS = r"(first|second|third|fourth|fifth|sixth|seventh|eighth|" \
+               r"ninth|tenth)"
+
+    def year_of(self, lines):
+        import re
+        found = re.findall(self.ORDINALS + r" year", " ".join(lines))
+        return set(found)
+
+    def test_vell_went_blind_in_one_year(self):
+        from pixel_rpg import scenes, story
+        tellings = [story.WARDEN_BY_BOSS["night_warden"].memory]
+        warden = scenes.SCENES_BY_KEY["warden_vell"]
+        tellings.append(warden.choice("listen").reply)
+        home = scenes.SCENES_BY_KEY["res_watch"]
+        tellings.append(home.body)
+        tellings.append(home.choice("blind").reply)
+        years = set()
+        for lines in tellings:
+            years |= self.year_of(lines)
+        self.assertEqual(len(years), 1,
+                         "Vell's blinding is told in different years: %s"
+                         % sorted(years))
+
+    def test_no_markdown_reaches_the_player(self):
+        """The screen draws text as it is - `*me*` came out with its
+        asterisks on (Kessa's Memory, the Ninety Mile markers)."""
+        import dataclasses
+        import re
+        from pixel_rpg import scenes, story
+        found = []
+
+        def walk(value, where):
+            if isinstance(value, str):
+                if re.search(r"\*\S|\S\*|__\w", value):
+                    found.append("%s: %r" % (where, value))
+            elif dataclasses.is_dataclass(value):
+                for f in dataclasses.fields(value):
+                    walk(getattr(value, f.name), where)
+            elif isinstance(value, dict):
+                for key, item in value.items():
+                    walk(item, "%s[%s]" % (where, key))
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    walk(item, where)
+
+        for module in (story, scenes):
+            for name, value in vars(module).items():
+                if name.isupper():
+                    walk(value, "%s.%s" % (module.__name__, name))
+        self.assertEqual(found, [])
+
+
+class TestAnEndingIsReadInPeace(unittest.TestCase):
+    """s96. A first ending unlocks a class, and the notice saying so sat
+    on the right-hand end of the ending's own lines for eight seconds."""
+
+    def test_notices_wait_for_the_records(self):
+        from pixel_rpg import game as G, story
+        _display_only()
+        game = G.Game()
+        game.meta.save = lambda: True
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "warden"
+        game.new_run("Reader", 6)
+        self.addCleanup(game.saves.delete, 6)
+        game.dialogue = None
+        game.scene = None
+        game.choose_ending(story.ENDINGS_BY_KEY["seventh"])
+        game.toast("Something to say", (255, 255, 255), 2.0)
+        self.assertEqual(game.state, G.ENDING_TEXT)
+        for _ in range(10 * 30):
+            game.update(1 / 30)
+        self.assertTrue(game.toasts.items,
+                        "a notice aged away while the ending was read")
+        game.finish_ending()
+        self.assertEqual(game.state, G.RECORDS)
+        for _ in range(10 * 30):
+            game.update(1 / 30)
+        self.assertFalse(game.toasts.items, "it never went on the records")
 
 
 class TestTheShrineSaysWhatItTook(unittest.TestCase):

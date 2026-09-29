@@ -120,6 +120,12 @@ def main():
         # that leaned on it for the unit tests passed with tests failing.
         if out.returncode != 0:
             PROBLEMS.append("%s: the suite ran and FAILED" % label)
+            # The evidence, not just the verdict: a failure seen only here
+            # is one nobody can act on once the output is thrown away.
+            tail = (out.stdout + out.stderr).strip().splitlines()[-40:]
+            print("\n  --- %s, last lines ---" % label)
+            for line in tail:
+                print("  | " + line)
         claimed = re.search(r"(\d+)\s+%s" % label.replace(" ", r"\s+"),
                             handoff)
         check(label, claimed.group(1) if claimed else None, found.group(1))

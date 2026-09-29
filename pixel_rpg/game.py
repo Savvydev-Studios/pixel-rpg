@@ -6907,7 +6907,13 @@ class Game:
         # So they are held rather than hidden: nothing ages, nothing is
         # lost, and a level-up you earned mid-fight is still there when
         # the fight ends. Wide screens are untouched.
-        if not (self.state == BATTLE and self.notices_would_intrude()):
+        #
+        # **And an ending's text is read, not skimmed past** (s96). A first
+        # ending unlocks a class, and its notice sat on the right-hand end
+        # of the ending's lines for eight seconds at a desktop size. It
+        # waits for the records instead, the same hold as a fight's.
+        if not ((self.state == BATTLE and self.notices_would_intrude())
+                or self.state == ENDING_TEXT):
             self.toasts.update(dt)
         self.floats.update(dt)
         self.shots.update(dt)
@@ -8839,7 +8845,7 @@ class Game:
                 menus.draw_new_skill(self)
         # Toasts last of all, so a message never ends up behind the menu that
         # produced it - "Not finished yet" used to appear under the quest log.
-        if self.player and self.state != BATTLE:
+        if self.player and self.state not in (BATTLE, ENDING_TEXT):
             self.toasts.draw(surface, self.assets, surface.get_width() - 24,
                              getattr(self, "toast_anchor", 210))
         # Over everything the game drew, under the fade: the controls are a

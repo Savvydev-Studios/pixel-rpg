@@ -33,11 +33,11 @@ below instead.
 
 1. On GitHub, open the repository, pick the branch, and use
    **Code > Download ZIP**.
-2. In the Files app, drag the ZIP into **Linux files**.
+2. In the Files app, open the ZIP (ChromeOS opens ZIPs itself) and copy
+   the folder inside it into **Linux files**.
 3. Open the **Terminal** app and type:
 
 ```bash
-unzip pixel-rpg-*.zip
 cd pixel-rpg-*/
 bash run.sh
 ```
