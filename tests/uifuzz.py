@@ -391,6 +391,8 @@ def room(rng, size, mode):
     host = G.Game()
     host.screen = pygame.display.set_mode(size)
     host.choose_mode(mode)
+    # A story room needs a slot; the picker would have given it one.
+    host.slot = 1
     host.pending_class = "warden"
     host.name_buffer = "Hostess"
     host.begin_run()
@@ -430,6 +432,14 @@ def pump(host, guest, frames=60):
 
 
 def room_is_sane(host, guest, where):
+    if guest.coop is None:
+        # **Whoever left, nothing of the room is left behind** (s96).
+        if guest.battle is not None and guest.battle.mirror:
+            raise Fault("%s: the guest was left in the host's fight" % where)
+        if guest.roam is not None and guest.roam.mirror:
+            raise Fault("%s: the guest was left in the host's arena" % where)
+        if guest.guest_world is not None and not guest.at_the_door():
+            raise Fault("%s: still a guest in a room that is gone" % where)
     if host.coop is None or guest.coop is None:
         return                     # somebody left; that is allowed
     if guest.roam is not None and not guest.roam.mirror:
@@ -447,15 +457,62 @@ def room_is_sane(host, guest, where):
                         % (where, theirs, ours))
 
 
+#: How a round can lose somebody (s96). Until then nobody ever left a
+#: fuzzed room, so the way out - where a guest had been left in a room
+#: with nobody in it, in the host's fight, and once crashed - was never
+#: pressed at all.
+DEPARTURES = ("the host leaves", "the host's window closes",
+              "the guest leaves")
+
+
+def depart(host, guest, how):
+    """Somebody goes. Returns who is still being played."""
+    if how == "the guest leaves":
+        guest.leave_coop(resume_own_run=True)
+        return (("host", host), ("guest", guest))
+    if how == "the host leaves":
+        host.leave_coop()             # Leave room, Back to title, the lobby
+    elif host.coop is not None:
+        host.coop.transport.close()   # nothing said, the socket just shuts
+    # **The guest must notice by itself** - a closed socket is all it gets.
+    started = time.monotonic()
+    while guest.coop is not None and time.monotonic() - started < 3.0:
+        time.sleep(0.004)
+        guest.update(1 / 30)
+        guest.draw()
+    if guest.coop is not None:
+        raise Fault("%s, and the guest never noticed" % how)
+    return (("guest", guest),)
+
+
 def one_room(seed, events=60):
-    """Drive a host and a guest for `events` presses each."""
+    """Drive a host and a guest for `events` presses each.
+
+    **Story rooms too** (s96): a valley is where the vault, the houses,
+    the trades and the wardens are, and this only ever hosted the three
+    modes that keep nothing. **And in half the rounds somebody leaves**,
+    at a random press, and whoever is left is played to the end.
+    """
     rng = random.Random(seed)
     size = rng.choice(SIZES)
-    mode = rng.choice([m.key for m in gamemodes.MODES if not m.saves])
+    mode = rng.choice([m.key for m in gamemodes.MODES])
+    leave_at = rng.randrange(events) if rng.random() < 0.5 else None
+    how = rng.choice(DEPARTURES)
     host, guest = room(rng, size, mode)
+    playing = (("host", host), ("guest", guest))
     try:
         for n in range(events):
-            for who, game in (("host", host), ("guest", guest)):
+            if n == leave_at:
+                where = "seed %d, %s room at %r, event %d: %s" % (
+                    seed, mode, size, n, how)
+                try:
+                    playing = depart(host, guest, how)
+                except Fault:
+                    raise
+                except Exception as exc:                  # noqa: BLE001
+                    raise Fault("%s raised %r" % (where, exc)) from exc
+                room_is_sane(host, guest, where)
+            for who, game in playing:
                 key = rng.choice(KEYS)
                 where = "seed %d, %s room at %r, event %d, %s pressed %s" % (
                     seed, mode, size, n, who, pygame.key.name(key))
@@ -465,7 +522,13 @@ def one_room(seed, events=60):
                 except Exception as exc:                  # noqa: BLE001
                     raise Fault("%s: %r" % (where, exc)) from exc
             try:
-                pump(host, guest, 6)
+                if len(playing) == 2:
+                    pump(host, guest, 6)
+                else:
+                    for _ in range(6):
+                        time.sleep(0.004)
+                        guest.update(1 / 30)
+                        guest.draw()
             except Exception as exc:                      # noqa: BLE001
                 raise Fault("%s: a frame raised %r" % (where, exc)) from exc
             room_is_sane(host, guest, where)

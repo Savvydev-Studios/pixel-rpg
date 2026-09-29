@@ -1399,6 +1399,15 @@ class Session:
                 self._fight_closed(game, data)
             elif kind in TRADE_TO_PLAYER:
                 self._client_trade(game, kind, data)
+        # **A host that leaves ends the room** (s96). The check above only
+        # runs before the welcome, so once a guest was in, a closed
+        # socket went unnoticed: the host dropped off the list twelve
+        # seconds later and the guest stayed in a room with nobody in it -
+        # the Leave row still there, every fight asked of a dead socket.
+        # After the messages, so a `bye` that came with a reason is the
+        # reason shown.
+        if self.ready and not self.error and not self.transport.connected:
+            self.fail("the host closed the room")
 
     def _chest_emptied(self, game, data):
         """Someone else got there first, or we are catching up on arrival."""

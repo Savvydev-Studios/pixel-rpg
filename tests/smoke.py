@@ -508,6 +508,69 @@ def a_warden_is_fought_by_the_whole_room():
     return True
 
 
+def a_host_that_leaves_ends_the_room():
+    """s96: a guest only noticed a dead socket before the welcome, so a
+    host who left mid-game left the guest in a room with nobody in it -
+    and a guest mid-fight in a fight that could never end.
+
+    Over a real socket because that is where "the socket closed" is a
+    fact rather than a stub's say-so: the guest is fighting beside the
+    host with a run of their own saved, the host goes, and the guest
+    must come home to that run - out of the fight, in story mode, able
+    to save.
+    """
+    from pixel_rpg.entities import BOSS_DEFS
+    host = G.Game()
+    host.pending_class = "warden"
+    host.new_run("Hostess", 1)
+    host.start_hosting(reach_out=False, port=0)
+    assert host.coop is not None, "hosting failed"
+
+    guest = G.Game()
+    guest.pending_class = "duelist"
+    guest.new_run("Homebody", 3)
+    guest.dialogue = None
+    guest.scene = None
+    assert guest.save_run(force=True), "the guest's own run did not save"
+    guest.code_buffer = host.coop.room_code
+    assert guest.try_join(), "joining failed"
+    _pump(host, guest, 120)
+    try:
+        if guest.state == G.CLASS_SELECT:
+            guest.name_buffer = "Guest"
+            guest.begin_run()
+            _pump(host, guest, 90)
+        assert guest.guest_world is not None, "the guest never arrived"
+        _stand_together(host, guest)
+        host.open_warden(BOSS_DEFS[0])
+        _pump(host, guest, 90)
+        assert guest.battle is not None and guest.battle.mirror, (
+            "the guest is not in the host's fight")
+
+        host.battle = None
+        host.leave_coop()
+        started = time.monotonic()
+        while guest.coop is not None and time.monotonic() - started < 5:
+            guest.update(1 / 30)
+            time.sleep(0.01)
+        assert guest.coop is None, "the guest never noticed the host left"
+        assert guest.battle is None, "the guest was left in the host's fight"
+        assert guest.guest_world is None, "the guest is still a guest"
+        assert guest.player is not None and guest.player.name == "Homebody", (
+            "the guest did not come home: %r"
+            % (guest.player and guest.player.name))
+        assert guest.mode == "story" and guest.state == G.OVERWORLD, (
+            guest.mode, guest.state)
+        assert guest.save_run(silent=True, force=True), (
+            "home, and it could not be saved")
+    finally:
+        for game in (host, guest):
+            game.battle = None
+            game.leave_coop()
+        guest.saves.delete(3)
+    return True
+
+
 def a_long_night_runs_in_a_room():
     """Free-roam co-op, end to end on a real socket (item 0bg, s77).
 
@@ -3176,6 +3239,8 @@ def run():
     check("a long night runs in a room", a_long_night_runs_in_a_room)
     check("a warden is fought by the whole room",
           a_warden_is_fought_by_the_whole_room)
+    check("a host that leaves ends the room",
+          a_host_that_leaves_ends_the_room)
     check("clean quit", g.quit_game)
     pygame.quit()
 

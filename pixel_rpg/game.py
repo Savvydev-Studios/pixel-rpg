@@ -1437,9 +1437,8 @@ class Game:
 
     def new_run(self, name="Wanderer", slot=1):
         self.house = None          # a new run starts outdoors (s56)
-        self.wanderers = []        # visible monsters, under Plain Sight
-        self.mode = gamemodes.DEFAULT_MODE
-        self.waves = None
+        # Visible monsters, the waves, a night: none of it is this run's.
+        self.forget_the_mode()
         self.slot = slot
         cls = classes_mod.get(self.pending_class)
         # A fresh run starts clean, whatever the last one did.
@@ -1733,6 +1732,9 @@ class Game:
             self.sfx("error")
             return False
         self.player, self.world, self.quests, meta = result
+        # **A loaded run is a story run** (s96): whatever mode was on
+        # screen before - a Last Stand you were a guest in - is not.
+        self.forget_the_mode()
         # **A loaded run is never indoors** (s56). Saving inside writes
         # you standing on the doorstep, so loading has to put the house
         # down as well - otherwise `overworld()` would hand back the
@@ -1838,8 +1840,31 @@ class Game:
         """Leave this hero in the valley it belongs to."""
         if self.guest_world is None or not self.player or not self.world:
             return False
-        if self.guests.remember(self.guest_world, self.player, self.world,
-                                self.quests):
+        # **A Last Stand or Long Night guest is not a valley's hero** (s96).
+        # Their runs keep `guest_world` only because a world has to exist
+        # (`new_wave_guest_run`), and leaving the room came straight here -
+        # so every one of them was written into the vault, which keeps
+        # twelve heroes and evicts the least recently played. A few rooms
+        # of Last Stand could push out the hero you have in a friend's
+        # valley. `save_run`'s gate, asked here too.
+        if not gamemodes.mode_for(self.mode).saves:
+            return False
+        # **The island, with the hero on the step** - `save_run`'s rule
+        # for a slot (s56), which this path never had. From inside a house
+        # it wrote the *room* as the valley: the wardens you had felled
+        # standing again, every flag gone, and you in a kitchen's
+        # coordinates on the island.
+        world, at = self.overworld(), None
+        if self.house is not None:
+            at = (self.player.x, self.player.y)
+            self.player.x, self.player.y = self.house["x"], self.house["y"]
+        try:
+            kept = self.guests.remember(self.guest_world, self.player, world,
+                                        self.quests)
+        finally:
+            if at is not None:
+                self.player.x, self.player.y = at
+        if kept:
             if not silent:
                 self.toast("Hero kept for this valley.", GOOD, 2.0)
                 self.sfx("select")
@@ -1913,6 +1938,8 @@ class Game:
             return False
         self.guest_pending = None
         self.guest_world = int(seed)
+        self.forget_the_mode()              # a valley is a story run (s96)
+        self.house = None                   # and is entered outdoors (s56)
         self.player = player
         self.quests = quests
         self.world = World(self.tile, int(seed))
@@ -2047,6 +2074,8 @@ class Game:
         """
         self.guest_pending = None
         self.guest_world = int(seed)
+        self.forget_the_mode()              # a valley is a story run (s96)
+        self.house = None                   # and is entered outdoors (s56)
         cls = classes_mod.get(self.pending_class)
         self.meta.tainted = False
         self.log.event("guest_run_start", seed=int(seed), cls=cls.key)
@@ -3321,11 +3350,26 @@ class Game:
         somewhere itself and passes nothing.
         """
         was_guest = self.guest_world is not None
-        # Leaving a room takes the house with it: the world about to be
-        # swapped out from under this is possibly a kitchen (s56).
-        self.house = None
+        # **Out of the house before anything is saved or swapped** (s56,
+        # s96). This dropped the house and kept the room: a host was left
+        # in a kitchen with no way out (`leave_house` needs the house), and
+        # the next save wrote the room's seed over their slot - a
+        # different island on reload, every warden standing. The step
+        # outside is where a save made indoors puts you anyway.
+        self.step_outdoors()
         if was_guest:
             self.save_guest_hero(silent=True)
+        # **A guest's copy of a room's fight ends with the room** (s96).
+        # The host ran it and nobody else can: left behind, a mirror
+        # battle stopped wanderers finding you and sent a full bag's
+        # answer back into a fight with nobody behind it, and a Long
+        # Night's mirror asked the room that was gone for its next frame
+        # and crashed. So did an invitation, frozen on the HUD.
+        if self.battle is not None and self.battle.mirror:
+            self.battle = None
+        if self.roam is not None and self.roam.mirror:
+            self.roam = None
+        self.fight_offer = None
         # **A trade dies with the room, and moves nothing.** The screen is
         # modal, so without this the player is left on a table whose other
         # half no longer exists, holding an agreement nobody can settle.
@@ -3344,6 +3388,16 @@ class Game:
             self.pre_coop_slot = None
             return
         self.guest_world = None
+        # **Nothing the valley had open comes home with you** (s96). A
+        # dialogue left behind stopped field bosses asking and made a held
+        # arrow repeat while you walked; a chapter card's `after_card`
+        # would have played *their* warden's last words in your run.
+        self.dialogue = None
+        self.scene = None
+        self.chapter_card = None
+        self.after_card = None
+        self.pending_epitaph = None
+        self.pending_ending = False
         slot, self.pre_coop_slot = self.pre_coop_slot, None
         if resume_own_run and slot is not None and self.load_run(slot):
             return
@@ -3351,9 +3405,10 @@ class Game:
         # - or the slot would not load. **The guest hero does not stay on
         # screen either way**: it is not a run you own, and leaving it there
         # would let the next Host a room open a room onto somebody else's
-        # valley.
-        self.player = None
-        self.world = None
+        # valley. And **the title means no run** (§45), mode and all -
+        # a Long Night's state left here went into the next slot you
+        # loaded (s96).
+        self.clear_run()
         self.go(TITLE)
 
     def adopt_world(self, seed):
@@ -3409,6 +3464,8 @@ class Game:
             return False
         self.player, self.world, self.quests = found
         self.guest_world = seed
+        self.forget_the_mode()              # a valley is a story run (s96)
+        self.house = None                   # and is entered outdoors (s56)
         # Not stored with a guest hero: playtime is a property of a run in a
         # slot, and there is no honest number to show for a valley you drop
         # in and out of.
@@ -5562,6 +5619,23 @@ class Game:
                 y = (ry + rh / 2) * self.tile
         return x, y
 
+    def step_outdoors(self):
+        """Put the house down without walking out of it: the island back,
+        the hero on the step, the screen as it was (s96).
+
+        For leaving a room, which has to take the house with it and is
+        not a door - `leave_house` is the door, and says so.
+        """
+        state, self.house = self.house, None
+        if state is None:
+            return
+        self.world = state["world"]
+        if self.player is not None:
+            self.player.x, self.player.y = state["x"], state["y"]
+            self.player.facing = "front"
+            self.camera.follow(*self.camera_target(), 0.0, snap=True)
+            self.last_tile = self.player_tile()
+
     def leave_house(self):
         """Back out onto the step you came in from."""
         if self.house is None:
@@ -6970,19 +7044,49 @@ class Game:
         """
         self.player = None
         self.world = None
-        self.battle = None
         self.slot = None
         # A wave run is a run: leaving one leaves no wave state behind
         # for the next mode to trip over (0ag, s59).
-        self.mode = gamemodes.DEFAULT_MODE
-        self.waves = None
-        self.wave_guest = False
-        self.wanderers = []
+        self.forget_the_mode()
         self.pending_mode = gamemodes.DEFAULT_MODE
         self.guest_world = None
         self.guest_pending = None
         self.pre_coop_slot = None
         self.host_when_ready = False
+
+    def forget_the_mode(self):
+        """Put down every mode's state: a story run is about to be on
+        screen, or none is.
+
+        **One place, because each caller forgot a different part** (s96).
+        `new_run` reset the mode and the waves but not a night, a hoard or
+        a free-roam fight; `clear_run` the same; and `load_run` - every
+        way back into a saved run - and the guest doors reset none of it.
+        So a guest who left a Last Stand or a Long Night room went home
+        to their own story run *still in that mode*, where `save_run`
+        refuses (correctly - §88's gate), and **nothing they did after
+        that was ever written down**: no autosave, no Save game, no save
+        on quit. In a Last Stand's mode a warden's kill did not count
+        either (`on_boss_defeated`).
+
+        Every mode sets its own state after this, so it is safe on any
+        way in; nothing here is a story run's own state.
+        """
+        self.mode = gamemodes.DEFAULT_MODE
+        self.waves = None
+        self.zombies = None
+        self.hoard = None
+        self.roam = None
+        self.roam_order = []
+        self.roam_pending_skill = ""
+        self.spoils = []
+        self.spoil_at = 0
+        self.spoils_then = ""
+        self.wave_guest = False
+        self.battle = None
+        self.wanderers = []
+        self.pending_lair = None
+        self.pending_gate = None
 
     def go_slots(self, mode):
         self.ui.slot_mode = mode

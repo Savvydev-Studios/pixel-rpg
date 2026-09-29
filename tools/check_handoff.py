@@ -115,6 +115,11 @@ def main():
         if not found:
             PROBLEMS.append("%s: could not run the suite to find out" % label)
             continue
+        # **A count read off a failing suite is not a total to quote**
+        # (s96). This ran both suites and kept only the number, so a gate
+        # that leaned on it for the unit tests passed with tests failing.
+        if out.returncode != 0:
+            PROBLEMS.append("%s: the suite ran and FAILED" % label)
         claimed = re.search(r"(\d+)\s+%s" % label.replace(" ", r"\s+"),
                             handoff)
         check(label, claimed.group(1) if claimed else None, found.group(1))

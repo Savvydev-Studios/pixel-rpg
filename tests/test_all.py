@@ -8466,6 +8466,218 @@ class TestLeavingARoom(unittest.TestCase):
         self.assertTrue(game.at_the_door())
 
 
+class TestAHostThatLeavesEndsTheRoom(unittest.TestCase):
+    """s96. A guest only checked for a dead socket *before* the welcome,
+    so a host who left - Leave room, Back to title, the window closed -
+    left every guest in a room with nobody in it: the host dropped off
+    the list twelve seconds later and the session carried on, asking a
+    closed socket for every fight."""
+
+    def dead_line(self, said=()):
+        from pixel_rpg import coop
+
+        class Line:
+            connected = False
+            events = []
+
+            def pump(self):
+                return list(said)
+
+            def send(self, *_args, **_kwargs):
+                pass
+
+            def close(self):
+                pass
+
+        session = coop.Session(coop.CLIENT, Line(), "Guest")
+        session.ready = True
+        return session
+
+    def test_a_socket_that_closes_after_the_welcome_ends_it(self):
+        session = self.dead_line()
+        self.assertFalse(session.update(None, 1 / 60),
+                         "the room carried on after the host had gone")
+        self.assertEqual(session.error, "the host closed the room")
+
+    def test_a_parting_reason_is_the_one_shown(self):
+        """The check runs after the frame's messages, so a `bye` that
+        came with its reason is not replaced by the generic one."""
+        session = self.dead_line(said=[("bye", {"reason": "room is full"})])
+        self.assertFalse(session.update(None, 1 / 60))
+        self.assertEqual(session.error, "room is full")
+
+
+class TestLeavingARoomLeavesNothingBehind(unittest.TestCase):
+    """s96. Once a guest could notice the host leave, the way out was
+    walked from every place a guest can be standing, and each one had
+    left something behind."""
+
+    SEED = 60_311
+
+    def setUp(self):
+        from pixel_rpg import game as G
+        _display_only()
+        self.G = G
+        self.game = G.Game()
+        self.game.meta.save = lambda: True
+        self.game.screen = pygame.display.set_mode((1280, 720))
+        self.game.guests.forget(self.SEED)
+        self.addCleanup(self.game.guests.forget, self.SEED)
+        self.addCleanup(self.game.saves.delete, 8)
+
+    def home_run(self):
+        game = self.game
+        game.pending_class = "warden"
+        game.new_run("Homebody", 8)
+        game.dialogue = None
+        game.scene = None
+        game.save_run(force=True)
+        return game
+
+    def guest_in_a_valley(self):
+        game = self.game
+        game.adopt_world(self.SEED)
+        game.pending_class = "warden"
+        game.new_guest_run("Visitor", self.SEED)
+        game.dialogue = None
+        game.scene = None
+        return game
+
+    def test_a_guests_fight_ends_with_the_room(self):
+        """A mirror is the host's fight. Left behind it stopped wanderers
+        finding you, and a full bag's answer went back into it."""
+        import types
+        game = self.guest_in_a_valley()
+        game.battle = types.SimpleNamespace(mirror=True)
+        game.fight_offer = {"by": "Host", "level": 3, "left": 4.0}
+        game.leave_coop(resume_own_run=True)
+        self.assertIsNone(game.battle)
+        self.assertIsNone(game.fight_offer,
+                          "an invitation was left frozen on the HUD")
+
+    def test_a_long_night_guest_does_not_crash_when_the_room_goes(self):
+        """The mirror asked the room for its next frame after the room
+        was gone: `self.coop` was None and the next update raised."""
+        import types
+        game = self.guest_in_a_valley()
+        game.roam = types.SimpleNamespace(mirror=True, finished=False)
+        game.leave_coop(resume_own_run=True)
+        self.assertIsNone(game.roam)
+        game.update(1 / 60)
+
+    def test_leaving_indoors_keeps_the_island(self):
+        """A host who left the room from a kitchen was left in it, with no
+        way out, and the next save wrote the room's seed over their slot -
+        a different island on reload."""
+        game = self.home_run()
+        island = game.world
+        game.world.portals[0].defeated = True
+        home = next(pos for pos, kind in island.doors.items()
+                    if kind == "home")
+        game.enter_house(home)
+        self.assertIsNot(game.world, island)
+        game.leave_coop(resume_own_run=True)
+        self.assertIsNone(game.house)
+        self.assertIs(game.world, island, "left standing in a kitchen")
+        self.assertTrue(game.save_run(silent=True, force=True))
+        game.player = game.world = None
+        self.assertTrue(game.load_run(8))
+        self.assertEqual(game.world.seed, island.seed)
+        self.assertTrue(game.world.portals[0].defeated)
+
+    def test_a_guest_indoors_keeps_the_valley_not_the_kitchen(self):
+        from pixel_rpg.world import World
+        game = self.guest_in_a_valley()
+        game.world.portals[0].defeated = True
+        game.world.portals[1].unlocked = True
+        game.world.story_flags.add("maren_0")
+        home = next(pos for pos, kind in game.world.doors.items()
+                    if kind == "home")
+        game.enter_house(home)
+        game.leave_coop(resume_own_run=True)
+        found = game.guests.recall(self.SEED,
+                                   lambda n: World(game.tile, n), game.tile)
+        self.assertIsNotNone(found)
+        _player, world, _quests = found
+        self.assertTrue(world.portals[0].defeated,
+                        "the vault kept a kitchen as the valley")
+        self.assertIn("maren_0", world.story_flags)
+
+    def test_saving_indoors_as_a_guest_saves_the_valley(self):
+        """The same rule on the ordinary path - an autosave in a house."""
+        from pixel_rpg.world import World
+        game = self.guest_in_a_valley()
+        game.world.portals[0].defeated = True
+        home = next(pos for pos, kind in game.world.doors.items()
+                    if kind == "home")
+        game.enter_house(home)
+        at = (game.player.x, game.player.y)
+        self.assertTrue(game.save_run(silent=True, force=True))
+        self.assertEqual((game.player.x, game.player.y), at,
+                         "saving moved the hero out of the house")
+        found = game.guests.recall(self.SEED,
+                                   lambda n: World(game.tile, n), game.tile)
+        self.assertTrue(found[1].portals[0].defeated)
+
+    def test_a_last_stand_guest_is_not_kept_in_the_vault(self):
+        """The vault holds twelve heroes and evicts the least recently
+        played; a hero made for one Last Stand has no business there."""
+        game = self.game
+        game.pending_class = "warden"
+        game.new_wave_guest_run("Stander", self.SEED)
+        self.assertEqual(game.mode, "waves")
+        game.leave_coop(resume_own_run=True)
+        self.assertFalse(game.guests.has(self.SEED))
+
+    def test_going_home_from_a_last_stand_room_is_a_story_run(self):
+        """Home still in wave mode, where nothing saves: everything done
+        after leaving the room was lost."""
+        game = self.home_run()
+        game.pre_coop_slot = 8
+        game.pending_class = "warden"
+        game.new_wave_guest_run("Stander", self.SEED)
+        game.leave_coop(resume_own_run=True)
+        self.assertEqual(game.player.name, "Homebody")
+        self.assertEqual(game.mode, "story")
+        self.assertIsNone(game.waves)
+        game.player.gold = 4321
+        self.assertTrue(game.save_run(silent=True, force=True),
+                        "the run came home and could not be saved")
+        self.assertEqual(game.saves.describe(8).get("gold"), 4321)
+
+    def test_nothing_the_valley_had_open_comes_home(self):
+        """A dialogue left open stopped field bosses asking and made held
+        arrows repeat while walking; a card's queued last words would
+        have played in the wrong run."""
+        game = self.home_run()
+        self.guest_in_a_valley()
+        self.assertEqual(game.pre_coop_slot, 8)
+        game.dialogue = {"title": "Tobin", "body": ["Quiet year."]}
+        game.chapter_card = object()
+        heard = []
+        game.after_card = lambda: heard.append("their warden")
+        game.leave_coop(resume_own_run=True)
+        self.assertEqual(game.player.name, "Homebody")
+        self.assertIsNone(game.dialogue)
+        self.assertIsNone(game.after_card)
+        game.chapter_card = object()
+        game.go(self.G.CHAPTER_CARD)
+        game.close_chapter_card()
+        self.assertEqual(heard, [], "their last words played in your run")
+
+    def test_a_loaded_run_forgets_the_mode(self):
+        import types
+        game = self.home_run()
+        game.mode = "zombies"
+        game.zombies = types.SimpleNamespace()
+        game.roam = types.SimpleNamespace(mirror=True, finished=False)
+        game.player = game.world = None
+        self.assertTrue(game.load_run(8))
+        self.assertEqual(game.mode, "story")
+        self.assertIsNone(game.zombies)
+        self.assertIsNone(game.roam)
+
+
 class TestWhoMayAct(unittest.TestCase):
     """Only the player whose turn it is may act, on every machine.
 
