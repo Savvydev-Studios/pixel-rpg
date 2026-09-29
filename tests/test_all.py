@@ -8351,6 +8351,120 @@ class TestLeavingARoom(unittest.TestCase):
         finally:
             game.leave_coop()
 
+    def enter(self, game):
+        game.handle_event(pygame.event.Event(
+            pygame.KEYDOWN, key=pygame.K_RETURN, unicode="", mod=0))
+
+    def ending_game(self):
+        """A host in a room, whose ending must not reach the profile - it
+        is shared by every test in this sandbox, and later ones read its
+        best score, its runs and its codex."""
+        from pixel_rpg import game as G
+        game = G.Game()
+        game.meta.save = lambda: True
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "warden"
+        game.new_run("Ender", 9)
+        game.dialogue = None
+        self.addCleanup(game.saves.delete, 9)
+        game.start_hosting(reach_out=False, port=0)
+        self.assertIsNotNone(game.coop, "hosting failed")
+        return game
+
+    def test_an_ending_leaves_the_room_too(self):
+        """s96: closing the records after an ending cleared the hero and
+        the world and nothing else, so an ending reached in a room came
+        back to a title with the socket still open - §40, on the one way
+        out of a run that did not go through "Back to title". A room can
+        reach the Door together now, so this is the way most will leave."""
+        from pixel_rpg import game as G, story
+        game = self.ending_game()
+        try:
+            game.choose_ending(story.ENDINGS[0])
+            self.enter(game)
+            self.assertEqual(game.state, G.RECORDS)
+            self.enter(game)
+            self.assertEqual(game.state, G.TITLE)
+            self.assertIsNone(game.coop, "the room outlived the run")
+            self.assertIsNone(game.player)
+            self.assertIsNone(game.world)
+            self.assertIsNone(game.slot)
+        finally:
+            game.leave_coop()
+
+    def test_a_room_that_closes_does_not_cut_an_ending_short(self):
+        """s96: the host closing their records first ends the room, and a
+        guest still reading their own ending was swapped out of it - back
+        to their run, or to the title - mid-sentence.
+
+        **The hero must stay a guest while it finishes**: the ending saves
+        (`finish_ending`), and a hero that had stopped being a guest would
+        be written over one of the player's own slots."""
+        from pixel_rpg import coop as coop_mod, game as G, story
+
+        class ClosedRoom:
+            role = coop_mod.CLIENT
+            adopt_seed = False
+            status = ""
+            error = "The host left."
+            closed = False
+
+            def update(self, game, dt):
+                return False
+
+            def close(self):
+                self.closed = True
+
+        game = G.Game()
+        game.meta.save = lambda: True         # see `ending_game`
+        game.screen = pygame.display.set_mode((1280, 720))
+        seed = 60_096
+        game.guests.forget(seed)
+        try:
+            game.adopt_world(seed)
+            game.pending_class = "warden"
+            game.new_guest_run("Mourner", seed)
+            game.dialogue = None
+            game.choose_ending(story.ENDINGS[0])
+            room = game.coop = ClosedRoom()
+            game.update_coop(1 / 60)
+            self.assertTrue(room.closed, "the socket was left open")
+            self.assertIsNone(game.coop)
+            self.assertEqual(game.state, G.ENDING_TEXT,
+                             "the ending was cut short")
+            self.assertEqual(game.player.name, "Mourner")
+            self.assertEqual(game.guest_world, seed,
+                             "the hero stopped being a guest mid-ending")
+
+            self.enter(game)                    # the ending -> the records
+            self.enter(game)                    # the records -> the title
+            self.assertEqual(game.state, G.TITLE)
+            self.assertIsNone(game.player)
+            self.assertIsNone(game.guest_world)
+            self.assertTrue(game.guests.has(seed),
+                            "the hero was not left in its valley")
+        finally:
+            game.coop = None
+            game.guests.forget(seed)
+
+    def test_a_replayed_door_is_not_an_ending(self):
+        """The codex can play the Door again; a room closing then is the
+        ordinary kind and puts you back where you belong."""
+        from pixel_rpg import game as G
+        game = G.Game()
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "warden"
+        game.new_run("Reader", 1)
+        game.dialogue = None
+        self.assertFalse(game.at_the_door())
+        game.replay_scene("door")
+        self.assertEqual(game.state, G.SCENE)
+        self.assertFalse(game.at_the_door())
+        game.scene = None
+        game.play_scene("door")
+        self.assertEqual(game.state, G.SCENE)
+        self.assertTrue(game.at_the_door())
+
 
 class TestWhoMayAct(unittest.TestCase):
     """Only the player whose turn it is may act, on every machine.
@@ -19464,6 +19578,90 @@ class TestNoScreenIsADeadEnd(unittest.TestCase):
         game.state = G.DIALOGUE
         game.close_trade()
         self.assertEqual(game.state, G.DIALOGUE)
+
+
+class TestAWardenTurnsTheChapter(unittest.TestCase):
+    """s96. The chapter card after a warden was put up and overwritten in
+    the same call - `enter_overworld` straight after `on_boss_defeated` -
+    so no chapter after the first ever showed its card. Driven the way a
+    player gets there: the portal, the dialogue, Enter, the fight."""
+
+    def beat_the_first_warden(self):
+        import sys
+        import os
+        sys.path.insert(0, os.path.join(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))), "tools"))
+        import balance
+        from pixel_rpg import game as G
+        from pixel_rpg.battle import MENU
+        _display_only()
+        game = G.Game()
+        # The kill unlocks codex pages; the profile is shared by every
+        # test in this sandbox, and a later one counts its pages.
+        game.meta.save = lambda: True
+        game.screen = pygame.display.set_mode((1280, 720))
+        game.pending_class = "warden"
+        game.new_run("Turner", 6)
+        game.dialogue = None
+        game.scene = None
+        game.state = G.OVERWORLD
+        self.addCleanup(game.saves.delete, 6)
+        hero = game.player
+        for _ in range(3):
+            hero.gain_xp(hero.xp_to_next())
+        balance.spend_points(hero)
+        hero.hp, hero.mp = hero.max_hp(), hero.max_mp()
+        portal = game.world.portals[0]
+        game.enter_portal(portal)
+        enter = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN,
+                                   unicode="", mod=0)
+        game.handle_event(enter)
+        self.assertEqual(game.state, G.BATTLE)
+        for monster in game.battle.enemies:
+            monster.hp = 1
+        seen = []
+        for frame in range(60 * 90):
+            fight = game.battle
+            if (game.state == G.BATTLE and fight and not fight.finished
+                    and fight.phase == MENU):
+                balance.take_turn(fight, fight.actor)
+            elif frame % 10 == 0 and (
+                    game.state == G.SCENE
+                    or (game.state == G.BATTLE and fight and fight.finished)):
+                game.handle_event(enter)
+            game.update(1 / 60)
+            if not seen or seen[-1] != game.state:
+                seen.append(game.state)
+            if game.state == G.OVERWORLD and G.SCENE in seen:
+                break
+        return game, portal, seen
+
+    def test_the_card_comes_before_the_last_words(self):
+        from pixel_rpg import game as G
+        game, portal, seen = self.beat_the_first_warden()
+        self.assertTrue(portal.defeated)
+        self.assertIn(G.CHAPTER_CARD, seen, seen)
+        self.assertIn(G.SCENE, seen, seen)
+        self.assertLess(seen.index(G.CHAPTER_CARD), seen.index(G.SCENE),
+                        "the card is the first thing to say it (s96)")
+        self.assertEqual(game.player.chapter_seen, 2)
+        self.assertIsNone(game.chapter_card)
+        self.assertIsNone(game.after_card)
+
+    def test_the_finale_is_left_as_it_was(self):
+        """0ck is his: with the Door opening on the kill, chapter seven's
+        card ("see Maren first") must not stand in front of it."""
+        from pixel_rpg import game as G
+        game, _portal, _seen = self.beat_the_first_warden()
+        game.chapter_card = object()
+        game.pending_epitaph = None
+        game.pending_ending = True
+        opened = []
+        game.open_ending_choice = lambda: opened.append(True)
+        game.after_the_fight()
+        self.assertEqual(opened, [True])
+        self.assertNotEqual(game.state, G.CHAPTER_CARD)
+        self.assertIsNone(game.chapter_card)
 
 class TestTheShrineSaysWhatItTook(unittest.TestCase):
     """s96. The prompt said 23g; the toast after it said -25."""

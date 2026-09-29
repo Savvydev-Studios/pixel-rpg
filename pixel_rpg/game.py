@@ -332,6 +332,9 @@ class Game:
         # The chapter card: what it says, and how long it has been up.
         self.chapter_card = None
         self.chapter_time = 0.0
+        #: What runs when the chapter card closes - the warden's last words,
+        #: queued behind the card that announces their death (s96).
+        self.after_card = None
 
     def _set_window_icon(self):
         """Draw the taskbar icon from the same sprite the .ico is built from.
@@ -2126,10 +2129,14 @@ class Game:
 
     def close_chapter_card(self):
         self.chapter_card = None
+        then, self.after_card = self.after_card, None
         if self.player and self.world:
             self.enter_overworld()
         else:
             self.go(TITLE)
+            return
+        if then is not None:
+            then()
 
     def skip_chapter_card(self):
         """Any key, any click - the same contract as the opening card."""
@@ -3502,7 +3509,20 @@ class Game:
             self.toast(note, ACCENT, 3.0)
         if not alive:
             message = self.coop.error or "The room closed."
-            self.leave_coop(resume_own_run=True)
+            if self.at_the_door():
+                # **A room that closes does not cut an ending short**
+                # (s96). The host reaching the title first would
+                # otherwise swap a guest's world out from under the
+                # ending they were reading. Only the socket goes; the
+                # hero stays a guest (`guest_world`), so the ending's own
+                # save still goes to the vault, and closing the records
+                # finishes leaving the way it always does.
+                self.log.event("coop_end", role=self.coop.role)
+                self.coop.close()
+                self.coop = None
+                self.ui.lobby_mode = ""
+            else:
+                self.leave_coop(resume_own_run=True)
             self.toast(message, BAD, 5.0)
 
     def event_lobby(self, event):
@@ -4454,7 +4474,20 @@ class Game:
                 if item is None:
                     continue
                 self.take_item(item)
+            # **A warden a room fells is felled for each of them** (s96).
+            # This path never called it, so after an assembled fight
+            # (§81) nobody's portal was marked, nobody got the Memory and
+            # the next road stayed sealed - and in a room a warden cannot
+            # be fought alone, so co-op never got past the first one.
+            # Each machine records its own kill, as §20 says a warden
+            # kill is recorded: per player, never shared.
+            for enemy in enemies:
+                if isinstance(enemy, Boss):
+                    self.on_boss_defeated(enemy)
             self.after_battle_checks()
+            self.after_the_fight()
+            self.publish_body()
+            return
         self.enter_overworld()
         self.publish_body()
 
@@ -4512,14 +4545,43 @@ class Game:
             # same number, because a party of one splits everything with
             # itself.
             self.grant_victory_rewards(enemies, battle.reward_for(player))
+        self.after_the_fight()
+
+    def after_the_fight(self):
+        """What a won fight leaves on screen, in order: **the chapter card
+        the kill turned, then the warden's last words, then the Door.**
+
+        **Both payout paths end here** (s96), and neither did this right.
+        The solo one called `enter_overworld` straight after
+        `on_boss_defeated` had put the chapter card up, so the state was
+        overwritten before the card was ever drawn - and `chapter_seen`
+        had already moved, so it never came back. **No chapter after the
+        first has ever shown its card after a warden.** The shared one
+        never called `on_boss_defeated` at all (see
+        `finish_shared_battle`), so it had nothing to show.
+
+        **The finale is left exactly as it was**: when the kill opens the
+        Door (`pending_ending`), chapter seven's card - *"Maren asked you
+        to see her first"* - would say one thing and the Door do another.
+        Which of those is right is 0ck, his.
+        """
         self.enter_overworld()
-        epitaph = self.pending_epitaph
-        if epitaph:
-            self.pending_epitaph = None
-            follow = self.open_ending_choice if self.pending_ending else None
-            self.play_scene(epitaph, after=follow)
-        elif self.pending_ending:
-            self.open_ending_choice()
+        epitaph, self.pending_epitaph = self.pending_epitaph, None
+        follow = self.open_ending_choice if self.pending_ending else None
+
+        def last_words():
+            if epitaph:
+                self.play_scene(epitaph, after=follow)
+            elif follow is not None:
+                follow()
+
+        if self.chapter_card is not None and follow is None:
+            self.after_card = last_words
+            self.chapter_time = 0.0
+            self.go(CHAPTER_CARD)
+            return
+        self.chapter_card = None
+        last_words()
 
     def grant_victory_rewards(self, enemies, rewards=None):
         """Pay this player their share of a won fight.
@@ -7597,11 +7659,16 @@ class Game:
     def event_records(self, event):
         if event.key in (pygame.K_RETURN, pygame.K_e, pygame.K_ESCAPE):
             if self.ending:
-                # The run is over and its slot is gone; drop back to a clean
-                # title rather than leaving a half-live world in memory.
-                self.player = None
-                self.world = None
+                # **An ending leaves the room and the run, the way "Back
+                # to title" does** (§40, §45; s96). This cleared the hero
+                # and the world and nothing else, so an ending reached in
+                # a room came back to a title with the socket still open
+                # - going back in from there is §40's bug, somebody
+                # else's valley. `finish_ending` has already saved; the
+                # slot is kept, not spent (2026-08-24).
                 self.ending = None
+                self.leave_coop()
+                self.clear_run()
             self.go(TITLE)
             self.sfx("back")
 
@@ -7755,6 +7822,22 @@ class Game:
             self.play_scene("door", after=self.resolve_door)
             return
         self.resolve_door()
+
+    def at_the_door(self):
+        """Is this run ending - from the last warden's fall to the records?
+
+        The one stretch a closing room must not interrupt (s96): the
+        last words, the Door, the choice, the ending and its records.
+        A replayed Door from the codex is not an ending.
+        """
+        if self.pending_ending or self.ending is not None:
+            return True
+        if self.state in (ENDING_CHOICE, ENDING_TEXT):
+            return True
+        scene = self.scene
+        return (self.state == SCENE and scene is not None
+                and not scene.get("replay")
+                and scene["scene"].key == "door")
 
     def resolve_door(self):
         """Act on what was said at the Door."""

@@ -478,6 +478,29 @@ def a_warden_is_fought_by_the_whole_room():
         assert theirs == ours, (
             "the two ends are fighting different things: %s vs %s"
             % (theirs, ours))
+
+        # **And it counts, for each of them** (s96). The shared payout
+        # never called `on_boss_defeated`: a warden a room felled was
+        # nobody's - no portal marked, no Memory, the next road sealed -
+        # and a room cannot fight one alone, so co-op stopped at the first
+        # warden. Played to the end here because only the end shows it.
+        for monster in host.battle.enemies:
+            monster.hp = 1
+        _drive_shared(host, guest)
+        for _ in range(12):
+            for game in (host, guest):
+                if game.state in (G.CHAPTER_CARD, G.SCENE, G.DIALOGUE):
+                    game.handle_event(key(pygame.K_RETURN))
+            _pump(host, guest, 6)
+        for name, game in (("host", host), ("guest", guest)):
+            assert game.world.portals[0].defeated, (
+                "%s: the warden the room felled was nobody's" % name)
+            assert game.world.portals[1].unlocked, (
+                "%s: the next road stayed sealed" % name)
+            assert len(game.player.relic_objects()) == 1, (
+                "%s never got the Memory" % name)
+            assert game.player.chapter_seen == 2, (
+                "%s: the chapter never turned" % name)
     finally:
         for game in (host, guest):
             game.battle = None
