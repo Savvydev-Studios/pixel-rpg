@@ -2894,6 +2894,83 @@ def a_host_whose_own_connection_fails_finishes_its_fight(_g):
             game.leave_coop()
 
 
+def one_quest_is_shared_by_a_room(_g):
+    """0cj, his: *"one quest between two people."* In a story room the
+    host's Maren quest is the party's. A guest takes it on by asking from
+    their own board, kills by either of them count, and when it is handed
+    in - by the guest, here - every machine pays its own hero the whole
+    reward. Driven through the board, over a real socket."""
+    from pixel_rpg import menus as menus_mod
+    from pixel_rpg.quests import QUESTS_BY_KEY
+
+    def enter(game):
+        game.handle_event(pygame.event.Event(
+            pygame.KEYDOWN, key=pygame.K_RETURN, unicode="", mod=0))
+
+    def board(game, tab, key):
+        game.go("quests")
+        game.ui.quest_readonly = False
+        game.ui.quest_tab = tab
+        rows = menus_mod.quest_rows(game)
+        keys = [entry.key for _kind, entry in rows]
+        assert key in keys, "%s is not on the board: %r" % (key, keys)
+        game.ui.quest.index = keys.index(key)
+
+    host, guest = _room()
+    try:
+        _pump(host, guest, 10)
+        assert host.party_room() and guest.party_room(), "not a party room"
+        assert "cull" in (guest.party_view or {}).get("o", ()), (
+            "the guest never heard what Maren's board offers")
+
+        # The hero they made after joining, not the "Newcomer" they said
+        # hello as (a first visit has no hero yet).
+        assert host.coop.remotes[guest.coop.player_id].name == "Guest", (
+            "the host still calls the guest %r"
+            % host.coop.remotes[guest.coop.player_id].name)
+
+        board(guest, 1, "cull")
+        enter(guest)                      # an ask, not an accept
+        _pump(host, guest, 10)
+        assert host.quests.active == ["cull"], (
+            "the host never took the guest's pick on")
+        assert (guest.party_view or {}).get("k") == "cull"
+        assert "cull" not in guest.quests.active, (
+            "the guest carries the party's quest as a second one")
+
+        guest.player.stats_tracker["kills"] += 6
+        guest.publish_body()
+        host.player.stats_tracker["kills"] += 4
+        _pump(host, guest, 10)
+        assert host.quest_progress("cull") == (10, 10), (
+            "the host does not count the guest's kills: %r"
+            % (host.quest_progress("cull"),))
+        assert guest.quest_progress("cull") == (10, 10)
+
+        before = (host.player.gold, guest.player.gold)
+        board(guest, 2, "cull")
+        enter(guest)                      # handed to the host
+        _pump(host, guest, 10)
+        for game in (host, guest):
+            for _ in range(6):            # a level's questions, answered
+                if game.state not in (G.NEWSKILL, G.FULLBAG):
+                    break
+                game.handle_event(pygame.event.Event(
+                    pygame.KEYDOWN, key=pygame.K_ESCAPE, unicode="", mod=0))
+        reward = QUESTS_BY_KEY["cull"].gold
+        assert host.player.gold - before[0] == reward, "the host was not paid"
+        assert guest.player.gold - before[1] == reward, (
+            "the guest was not paid the whole reward")
+        assert "cull" in host.quests.completed
+        assert "cull" in guest.quests.completed, (
+            "the guest's own log never heard the job was done")
+        assert not host.quests.active
+        assert not (guest.party_view or {}).get("k")
+    finally:
+        for game in (host, guest):
+            game.leave_coop()
+
+
 def a_group_fight_resolves(g):
     """A pack must actually die, pay out, and hand the world back.
 
@@ -3224,6 +3301,8 @@ def run():
           lambda: a_dropped_fighter_does_not_hang_the_fight(g))
     check("a host whose own connection fails finishes its fight",
           lambda: a_host_whose_own_connection_fails_finishes_its_fight(g))
+    check("one quest is shared by a room",
+          lambda: one_quest_is_shared_by_a_room(g))
     check("a group fight resolves", lambda: a_group_fight_resolves(g))
     check("targeting a group", lambda: targeting_a_group(g))
     check("story choices are recorded",

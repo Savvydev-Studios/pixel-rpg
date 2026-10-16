@@ -19875,6 +19875,140 @@ class TestAWardenTurnsTheChapter(unittest.TestCase):
         self.assertNotEqual(game.state, G.CHAPTER_CARD)
         self.assertIsNone(game.chapter_card)
 
+class TestOneQuestBetweenTwoPeople(unittest.TestCase):
+    """0cj, his (2026-08-24): *"one quest between two people."* The
+    arithmetic the host does for a story room's shared quest, and what a
+    guest does with what the host tells it. The whole flow, over a real
+    socket, is smoke's `one_quest_is_shared_by_a_room`."""
+
+    @staticmethod
+    def body(**tracker):
+        level = tracker.pop("level", 1)
+        return {"level": level, "tracker": tracker}
+
+    def test_counters_add_up_across_the_party(self):
+        from pixel_rpg.partyquest import PartyQuest
+        party = PartyQuest()
+        party.follow("cull", {2: self.body(kills=5)})
+        party.see({2: self.body(kills=11)})
+        # The host's own four (7 - 3) and the guest's six.
+        self.assertEqual(party.progress(7, 3), (10, 10))
+
+    def test_a_newcomer_counts_from_when_they_walked_in(self):
+        from pixel_rpg.partyquest import PartyQuest
+        party = PartyQuest()
+        party.follow("cull", {})
+        party.see({3: self.body(kills=20)})
+        party.see({3: self.body(kills=22)})
+        self.assertEqual(party.progress(0, 0), (2, 10))
+
+    def test_a_guest_who_leaves_keeps_their_share(self):
+        from pixel_rpg.partyquest import PartyQuest
+        party = PartyQuest()
+        party.follow("cull", {2: self.body(kills=3)})
+        party.see({2: self.body(kills=8)})
+        party.see({})
+        self.assertEqual(party.progress(0, 0), (5, 10))
+
+    def test_an_absolute_goal_is_whoever_is_furthest(self):
+        from pixel_rpg.partyquest import PartyQuest
+        party = PartyQuest()
+        party.follow("ascend", {2: self.body(level=20)})
+        self.assertEqual(party.progress(12), (20, 20))
+
+    def test_a_new_quest_starts_the_count_again(self):
+        from pixel_rpg.partyquest import PartyQuest
+        party = PartyQuest()
+        party.follow("cull", {2: self.body(kills=5, chests=1)})
+        party.see({2: self.body(kills=9, chests=1)})
+        self.assertTrue(party.follow("scavenger",
+                                     {2: self.body(kills=9, chests=1)}))
+        party.see({2: self.body(kills=9, chests=3)})
+        self.assertEqual(party.progress(0, 0), (2, 5))
+        self.assertFalse(party.follow("scavenger", {}))
+
+    def test_a_body_is_not_believed(self):
+        from pixel_rpg.partyquest import metric_of
+        self.assertEqual(metric_of({"tracker": {"kills": 10 ** 12}}, "kills"),
+                         10_000_000)
+        self.assertEqual(metric_of(None, "kills"), 0)
+        self.assertEqual(metric_of({"tracker": "lots"}, "kills"), 0)
+        self.assertEqual(metric_of({"level": "99999"}, "level"), 999)
+
+    def guest(self):
+        """A story hero in a room as a guest, without a socket."""
+        from pixel_rpg import game as G
+        _display_only()
+        game = G.Game()
+        game.meta.save = lambda: True
+        game.pending_class = "warden"
+        game.new_run("Guest", 6)
+        game.state = G.OVERWORLD
+        game.dialogue = game.scene = None
+        self.addCleanup(game.saves.delete, 6)
+
+        class Room:
+            """Just enough of a guest's side of a room."""
+            player_id, role, ready, remotes = 2, "client", True, {}
+
+            def __getattr__(self, _name):
+                return lambda *_a, **_k: None
+        game.coop = Room()
+        self.addCleanup(setattr, game, "coop", None)
+        self.assertTrue(game.party_guest())
+        return game
+
+    def test_what_the_host_says_is_checked(self):
+        game = self.guest()
+        game.party_quest_heard({"k": "nonsense", "d": 999,
+                                "o": ["cull", "x" * 99, 7]})
+        self.assertEqual(game.party_view["k"], "")
+        self.assertEqual(game.party_view["o"], ["cull"])
+        game.party_quest_heard({"k": "cull", "d": 999})
+        self.assertEqual(game.quest_progress("cull"), (10, 10))
+
+    def test_a_guest_is_paid_the_whole_reward_once(self):
+        from pixel_rpg.quests import QUESTS_BY_KEY
+        game = self.guest()
+        quest = QUESTS_BY_KEY["cull"]
+        game.party_quest_heard({"k": "cull", "d": 10})
+        gold = game.player.gold
+        game.party_quest_done("cull", "Hostess")
+        self.assertEqual(game.player.gold - gold, quest.gold)
+        self.assertIn("cull", game.quests.completed)
+        self.assertEqual(game.party_view["k"], "")
+        # Handed in again (a second room, the same job): helping, not paid.
+        game.party_quest_done("cull", "Hostess")
+        self.assertEqual(game.player.gold - gold, quest.gold)
+
+    def test_the_room_learns_the_name_of_the_hero_made_after_joining(self):
+        """A first visit says hello as "Newcomer" - there is no hero yet -
+        and the host went on calling them that in every toast. Found
+        screenshotting this feature."""
+        from pixel_rpg import coop as coop_mod
+
+        class Wire:
+            def broadcast(self, *_a, **_k):
+                pass
+        host = coop_mod.Session(coop_mod.HOST, Wire(), "Hostess")
+        host.remotes[2] = coop_mod.Remote(2, "Newcomer")
+        host._took_body(2, {"p": {"name": "Guest", "level": 3}})
+        self.assertEqual(host.remotes[2].name, "Guest")
+        host._took_body(2, {"p": {"name": "<b>" * 40, "level": 3}})
+        self.assertLessEqual(len(host.remotes[2].name), coop_mod.MAX_NAME)
+
+    def test_a_guest_asks_rather_than_takes(self):
+        from pixel_rpg.quests import QUESTS_BY_KEY
+        game = self.guest()
+        asked = []
+        game.coop.ask_party_quest = lambda kind, key: asked.append((kind, key))
+        game.party_quest_heard({"k": "", "o": ["cull"]})
+        text, _colour = game.take_on_quest(QUESTS_BY_KEY["cull"])
+        self.assertEqual(asked, [("pqa", "cull")])
+        self.assertEqual(game.quests.active, [], "a guest took it alone")
+        self.assertIn("Asked", text)
+
+
 class TestNoPayoutDropsItsQuestions(unittest.TestCase):
     """s96, 0cm's second half. 4.42.1 made a fight and a wave ask about a
     full bag and a fifth skill; five other payouts still threw both away.

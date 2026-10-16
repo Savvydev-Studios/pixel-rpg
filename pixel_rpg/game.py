@@ -39,7 +39,8 @@ from .items import (BASES_BY_NAME, CONSUMABLE_ORDER, CONSUMABLES, Item,
                     roll_item)
 from .keybinds import FALLBACK_MOVEMENT, Keybinds
 from .modifiers import RunModifiers
-from .quests import ACHIEVEMENTS as _ACHIEVEMENTS, QuestLog
+from .quests import ACHIEVEMENTS as _ACHIEVEMENTS, QUESTS_BY_KEY, QuestLog
+from .partyquest import PartyQuest, metric_of
 
 
 def quest_achievements():
@@ -200,6 +201,12 @@ class Game:
         self.player = None
         self.world = None
         self.quests = QuestLog()
+        # **One quest between two people** (0cj): the host's view of the
+        # quest a story room shares, a guest's copy of what the host last
+        # said about it, and what was last said, so it is said on change.
+        self.party = PartyQuest()
+        self.party_view = None
+        self._party_said = None
         self.battle = None
         self.camera = Camera(self.settings.width, self.settings.height,
                              self.settings.tile)
@@ -3517,6 +3524,11 @@ class Game:
         somewhere itself and passes nothing.
         """
         was_guest = self.guest_world is not None
+        # The party's quest was the room's; a guest's own is still in
+        # their own log, untouched (0cj).
+        self.party.reset()
+        self.party_view = None
+        self._party_said = None
         # **Out of the house before anything is saved or swapped** (s56,
         # s96). This dropped the house and kept the room: a host was left
         # in a kitchen with no way out (`leave_house` needs the house), and
@@ -3717,6 +3729,7 @@ class Game:
         self.update_pending_fight(dt)
         if self.coop is not None and self.coop.role == coop_mod.HOST:
             self.push_battle_state()
+            self.tick_party_quest()
         if self.coop is not None and self.coop.adopt_seed:
             self.coop.adopt_seed = False
             # False means there is no world yet: character creation is on
@@ -3749,6 +3762,224 @@ class Game:
             else:
                 self.leave_coop(resume_own_run=True)
             self.toast(message, BAD, 5.0)
+
+    # ------------------------------------- one quest between two people ---
+    #
+    # **Item 0cj** (his, 2026-08-24): *"one quest between two people."* In a
+    # story room the host's Maren quest is the party's; the defaults for
+    # what his sentence predates - the party's progress, the whole reward
+    # each, Maren's quest only - are in `partyquest`, and are his to
+    # overrule. Host-arbitrated like a chest (s20): a guest asks.
+
+    def party_room(self):
+        """A story room with somebody else in it - where a quest is shared."""
+        coop = self.coop
+        if coop is None or not coop.ready or self.player is None:
+            return False
+        if gamemodes.mode_for(self.mode).key != "story":
+            return False
+        return coop.role != coop_mod.HOST or bool(coop.remotes)
+
+    def party_guest(self):
+        return self.party_room() and self.coop.role != coop_mod.HOST
+
+    def quests_carried(self):
+        """The Maren quest on this hero's board: the party's, in a room."""
+        if self.party_guest():
+            key = (self.party_view or {}).get("k", "")
+            return [QUESTS_BY_KEY[key]] if key in QUESTS_BY_KEY else []
+        return [QUESTS_BY_KEY[k] for k in self.quests.active
+                if k in QUESTS_BY_KEY]
+
+    def quest_offers(self):
+        """What Maren's board offers - the host's offers, in a room."""
+        if self.party_guest():
+            return [QUESTS_BY_KEY[k]
+                    for k in (self.party_view or {}).get("o", ())]
+        return list(self.quests.available(self.player))
+
+    def quest_progress(self, key):
+        """(done, target) - the party's in a story room, else your own."""
+        if self.party_room() and key in QUESTS_BY_KEY:
+            if self.coop.role == coop_mod.HOST and key == self.party.key:
+                quest = QUESTS_BY_KEY[key]
+                own = metric_of({"level": self.player.level,
+                                 "tracker": self.player.stats_tracker},
+                                quest.metric)
+                base = (0 if quest.absolute
+                        else self.quests.baselines.get(key, 0))
+                return self.party.progress(own, base)
+            view = self.party_view or {}
+            if self.coop.role != coop_mod.HOST and key == view.get("k"):
+                return view.get("d", 0), view.get("t", 1)
+        return self.quests.progress(self.player, key)
+
+    def tick_party_quest(self):
+        """Host side: keep the party's count, and say it when it moves."""
+        if not self.party_room() or self.coop.role != coop_mod.HOST:
+            return
+        mine = self.coop.player_id
+        bodies = {pid: body for pid, body in self.coop.bodies().items()
+                  if pid != mine}
+        key = self.quests.active[0] if self.quests.active else ""
+        self.party.follow(key, bodies)
+        done, target = self.quest_progress(key) if key else (0, 1)
+        offers = ([] if self.quests.full()
+                  else [q.key for q in self.quests.available(self.player)])
+        said = (key, done, target, tuple(offers),
+                tuple(sorted(self.coop.remotes)))
+        if said != self._party_said:
+            self._party_said = said
+            self.coop.announce_party_quest(
+                {"k": key, "d": done, "t": target, "o": offers,
+                 "by": self.player.name})
+
+    def party_quest_heard(self, data):
+        """Guest side: what the host says the party is on."""
+        key = sec.safe_str(data.get("k"), 24)
+        key = key if key in QUESTS_BY_KEY else ""
+        target = QUESTS_BY_KEY[key].target if key else 1
+        offers = [k for k in (sec.safe_str(v, 24)
+                              for v in sec.safe_list(data.get("o"), 16))
+                  if k in QUESTS_BY_KEY]
+        self.party_view = {"k": key, "t": target, "o": offers,
+                           "d": sec.safe_int(data.get("d"), 0, target, 0),
+                           "by": sec.safe_str(data.get("by"), 24)}
+
+    def party_quest_taken(self, player_id, key):
+        """Host side: a guest asks to take a quest on for the party."""
+        if not self.party_room() or self.coop.role != coop_mod.HOST:
+            return
+        offered = [q.key for q in self.quests.available(self.player)]
+        if self.quests.full() or key not in offered:
+            return
+        self.quests.accept(key, self.player)
+        name = getattr(self.coop.remotes.get(player_id), "name", "") or "They"
+        self.toast("%s took on %s for the party."
+                   % (name, QUESTS_BY_KEY[key].title), GOOD, 4.0)
+        self.sfx("quest")
+
+    def party_quest_handed_in(self, player_id, key):
+        """Host side: a guest asks to hand the party's quest in."""
+        if not self.party_room() or self.coop.role != coop_mod.HOST:
+            return
+        if key != self.party.key or key not in self.quests.active:
+            return
+        done, target = self.quest_progress(key)
+        if done < target:
+            return
+        name = getattr(self.coop.remotes.get(player_id), "name", "")
+        with self.questions_held():
+            self.finish_party_quest(key, by=name or "Somebody")
+        self.ask_where_safe()
+
+    def finish_party_quest(self, key, by=""):
+        """Host side: the party's quest is done. Everybody is paid in full,
+        each machine its own hero - the host here, the rest on `pqd`.
+        Pays; asks nothing - the caller knows when that is safe."""
+        log = self.quests
+        if key in log.active:
+            log.active.remove(key)
+        if key not in log.completed:
+            log.completed.append(key)
+        log.baselines.pop(key, None)
+        self.coop.announce_party_quest_done(key, by or self.player.name)
+        self.party.reset()
+        self.pay_quest(QUESTS_BY_KEY[key], by)
+
+    def party_quest_done(self, key, by):
+        """Guest side: the host says the party's quest was handed in."""
+        if not self.party_guest() or key not in QUESTS_BY_KEY:
+            return
+        quest, log = QUESTS_BY_KEY[key], self.quests
+        if key in log.active:
+            log.active.remove(key)
+            log.baselines.pop(key, None)
+        if self.party_view and self.party_view.get("k") == key:
+            self.party_view = dict(self.party_view, k="", d=0, t=1)
+        if key in log.completed:
+            # The whole reward each - once. Helping with a job you have
+            # already done is helping, not a second payday.
+            self.toast("%s is done. You had done it before." % quest.title,
+                       DIM, 4.0)
+            return
+        log.completed.append(key)
+        with self.questions_held():
+            self.pay_quest(quest, by=by)
+        self.ask_where_safe()
+
+    def ask_where_safe(self):
+        """Questions from somebody else's hand-in.
+
+        Asked now over the board or the world; anywhere else - a fight, a
+        conversation - they wait for the world (the safety net in
+        `update`), so a quest handed in while you are mid-fight does not
+        take the fight's screen.
+        """
+        if not self.questions:
+            return
+        if self.state == QUESTS:
+            self.ask_held_then(lambda: self.go(QUESTS))
+        elif self.state == OVERWORLD:
+            self.ask_held_then()
+
+    def pay_quest(self, quest, by=""):
+        """A quest's whole reward, to this hero. Every hand-in pays here,
+        and asks nothing: whoever called it holds the questions."""
+        player = self.player
+        player.gold += quest.gold
+        player.stats_tracker["gold_earned"] += quest.gold
+        levels = self.earn_xp(quest.xp)
+        said = "%s handed it in. " % by if by else ""
+        self.toast("%sReward: %d g, %d xp" % (said, quest.gold, quest.xp),
+                   ACCENT, 3.5)
+        if quest.item_ilvl:
+            # Through `roll_loot`, which is the only roll that remembers
+            # Brittle Steel - the board's own roll went round it.
+            item = self.roll_loot(quest.item_ilvl, luck=0.35)
+            if self.pocket(item, "quest"):
+                self.toast("Reward item: %s" % item.name, item.color, 4.0)
+        if levels:
+            self.toast("Level %d!" % player.level, GOOD, 4.0)
+        self.sfx("levelup")
+
+    def take_on_quest(self, quest):
+        """Take a quest from Maren's board. Returns (notice, colour)."""
+        if self.party_guest():
+            if (self.party_view or {}).get("k"):
+                return "The party is already on a job.", BAD
+            self.coop.ask_party_quest("pqa", quest.key)
+            host = (self.party_view or {}).get("by") or "the host"
+            return "Asked %s to take it on with you." % host, GOOD
+        if not self.quests.accept(quest.key, self.player):
+            return "You are already carrying a job. Finish it first.", BAD
+        self.toast("Accepted: %s" % quest.title, GOOD, 3.0)
+        self.sfx("quest")
+        return "Accepted: %s" % quest.title, GOOD
+
+    def hand_in_quest(self, quest):
+        """Hand a quest in at the board. Returns (notice, colour), or None
+        once it is paid - and then any question it raised is up."""
+        key = quest.key
+        done, target = self.quest_progress(key)
+        if done < target:
+            return "%s - %d of %d done" % (quest.title, done, target), BAD
+        if self.party_guest():
+            self.coop.ask_party_quest("pqc", key)
+            host = (self.party_view or {}).get("by") or "the host"
+            return "Handed to %s for the party." % host, GOOD
+        if self.party_room():
+            with self.questions_held():
+                self.finish_party_quest(key)
+        else:
+            if not self.quests.claim(self.player, key):
+                return "%s - %d of %d done" % (quest.title, done, target), BAD
+            with self.questions_held():
+                self.pay_quest(quest)
+        if self.questions:
+            # Asked over the board, and back to it after the last.
+            self.ask_held_then(lambda: self.go(QUESTS))
+        return None
 
     def event_lobby(self, event):
         if self.coop is not None:
@@ -4972,8 +5203,10 @@ class Game:
             self.sfx("quest")
         if fresh:
             self.meta.save()
-        for quest in self.quests.ready_to_claim(self.player):
-            self.toast("Quest ready: %s" % quest.title, GOOD, 5.0)
+        for quest in self.quests_carried():
+            done, target = self.quest_progress(quest.key)
+            if done >= target:
+                self.toast("Quest ready: %s" % quest.title, GOOD, 5.0)
 
     # -------------------------------------------------------- interactions ---
 
@@ -6992,6 +7225,13 @@ class Game:
             self.update_chapter_card(dt)
             return
         self.fade.update(dt)
+        if (self.state == OVERWORLD and self.questions
+                and not self.holding_questions
+                and self.after_questions is None):
+            # A payout the room sent while you were busy - the party's
+            # quest handed in by somebody else mid-fight - asks once you
+            # are back in the world, not over the fight (0cj).
+            self.next_question()
         if self.state == ROAM:
             # **Its own branch, and it returns.** A free-roam fight is
             # not the overworld and not a battle - nothing below this

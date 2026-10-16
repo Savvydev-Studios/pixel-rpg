@@ -1931,15 +1931,16 @@ STORY_TAB = 0
 
 
 def quest_rows(game):
-    log, player = game.quests, game.player
+    log = game.quests
     tab = game.ui.quest_tab
     if tab == STORY_TAB:
         return []               # a page, not a list - see `draw_story_tab`
     if tab == 1:
-        return [("offer", q) for q in log.available(player)]
+        return [("offer", q) for q in game.quest_offers()]
     if tab == 2:
         from .quests import ERRANDS_BY_KEY
-        rows = [("active", QUESTS_BY_KEY[k]) for k in log.active]
+        # In a story room, the party's quest (0cj); your own otherwise.
+        rows = [("active", q) for q in game.quests_carried()]
         rows += [("errand", ERRANDS_BY_KEY[k]) for k in log.errands
                  if k in ERRANDS_BY_KEY]
         return rows
@@ -2024,10 +2025,10 @@ _MAREN = (214, 198, 168)
 
 def draw_quests(game):
     overlay(game)
-    surface, assets, player, state = game.screen, game.assets, game.player, game.ui
+    surface, assets, state = game.screen, game.assets, game.ui
     from .quests import MAX_ACTIVE
     readonly = state.quest_readonly
-    carrying = len(game.quests.active)
+    carrying = len(game.quests_carried())
     from .quests import MAX_ERRANDS
     errands = len(game.quests.errands)
     subtitle = ("Your own notes - find Maren or a runner to take work on"
@@ -2059,7 +2060,7 @@ def draw_quests(game):
     # rather than each one stepping left by however long its number is.
     count_col = max([assets.font("tiny").size(
         "READY" if done >= target else "%d / %d" % (done, target))[0]
-        for done, target in (game.quests.progress(player, entry.key)
+        for done, target in (game.quest_progress(entry.key)
                              for kind, entry in rows
                              if kind in ("active", "errand"))] or [0])
     for i, (kind, entry) in state.quest.window(rows):
@@ -2090,7 +2091,7 @@ def draw_quests(game):
         small, tiny = assets.font("small"), assets.font("tiny")
         text_x = row.x + 14
         if kind in ("active", "errand"):
-            done, target = game.quests.progress(player, entry.key)
+            done, target = game.quest_progress(entry.key)
             ready = done >= target
             count = "READY" if ready else "%d / %d" % (done, target)
             count_w = count_col
@@ -2157,7 +2158,7 @@ def draw_quests(game):
 
 
 def quests_event(game, event):
-    state, player = game.ui, game.player
+    state = game.ui
     if state.quest_readonly and event.key in (pygame.K_RETURN, pygame.K_e):
         state.quest_notice = (
             "Find Elder Maren or one of her runners to take this on.", BAD)
@@ -2178,43 +2179,21 @@ def quests_event(game, event):
         game.sfx("move")
     elif event.key in (pygame.K_RETURN, pygame.K_e) and rows:
         kind, entry = rows[state.quest.index]
+        # Through the game, which knows whether this board is a party's
+        # (0cj): a guest's taking-on and handing-in are asks to the host.
         if kind == "offer":
-            if not game.quests.accept(entry.key, player):
-                state.quest_notice = (
-                    "You are already carrying a job. Finish it first.", BAD)
+            state.quest_notice = game.take_on_quest(entry)
+            if state.quest_notice[1] == BAD:
                 game.sfx("error")
                 return
-            state.quest_notice = ("Accepted: %s" % entry.title, GOOD)
-            game.toast("Accepted: %s" % entry.title, GOOD, 3.0)
-            game.sfx("quest")
         elif kind == "active":
-            reward = game.quests.claim(player, entry.key)
-            if not reward:
-                done, target = game.quests.progress(player, entry.key)
-                state.quest_notice = ("%s - %d of %d done"
-                                      % (entry.title, done, target), BAD)
-                game.sfx("error")
+            notice = game.hand_in_quest(entry)
+            if notice is not None:
+                state.quest_notice = notice
+                game.sfx("error" if notice[1] == BAD else "select")
                 return
-            gold, xp, ilvl = reward
-            player.gold += gold
-            player.stats_tracker["gold_earned"] += gold
-            with game.questions_held():
-                levels = game.earn_xp(xp)
-                game.toast("Reward: %d g, %d xp" % (gold, xp), ACCENT, 3.5)
-                if ilvl:
-                    # Through `roll_loot`, which is the only roll that
-                    # remembers Brittle Steel - this one went round it.
-                    item = game.roll_loot(ilvl, luck=0.35)
-                    if game.pocket(item, "quest"):
-                        game.toast("Reward item: %s" % item.name,
-                                   item.color, 4.0)
-            if levels:
-                game.toast("Level %d!" % player.level, GOOD, 4.0)
-            game.sfx("levelup")
-            if game.questions:
-                # Asked over the board, and back to it after the last.
-                game.ask_held_then(lambda: game.go("quests"))
-                return
+            if game.state != "quests":
+                return      # a question is up; the board comes back after
         state.quest.clamp_to(len(quest_rows(game)))
 
 

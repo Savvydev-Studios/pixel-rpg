@@ -82,7 +82,11 @@ from .config import DIFFICULTIES
 # its step (the trader could not be entered). A village is rebuilt from
 # its seed on every machine, so a 4.41.7 and a 4.41.8 would put her in
 # two places - and E at the shop would mean two different things.
-PROTOCOL = 14
+# 15 (0cj): one quest between two people. Four new kinds - `pq` (the
+# party's quest, host to all), `pqd` (it was handed in), `pqa` and `pqc`
+# (a guest asking to take one on, or to hand it in). A 4.44 guest would
+# carry its own quest beside the party's and never hear it was done.
+PROTOCOL = 15
 MAX_NAME = 18
 # A player who has said nothing for this long has gone.
 TIMEOUT = 12.0
@@ -783,6 +787,37 @@ class Session:
         except Exception:                                 # noqa: BLE001
             pass
 
+    # -- one quest between two people (0cj) --------------------------------
+
+    def ask_party_quest(self, kind, key):
+        """Guest side: `pqa` to take a quest on, `pqc` to hand it in."""
+        if self.role == HOST or not self.ready or kind not in ("pqa", "pqc"):
+            return False
+        try:
+            self.transport.send(kind, {"k": str(key)[:24]})
+        except Exception:                                 # noqa: BLE001
+            return False
+        return True
+
+    def announce_party_quest(self, state):
+        """Host side: the quest the room is on, and how far along."""
+        if self.role != HOST:
+            return
+        try:
+            self.transport.broadcast("pq", dict(state))
+        except Exception:                                 # noqa: BLE001
+            pass
+
+    def announce_party_quest_done(self, key, by):
+        """Host side: it was handed in - every machine pays its own hero."""
+        if self.role != HOST:
+            return
+        try:
+            self.transport.broadcast("pqd", {"k": str(key)[:24],
+                                             "by": str(by)[:24]})
+        except Exception:                                 # noqa: BLE001
+            pass
+
     def announce_chest(self, gx, gy):
         """Host side: tell the room a chest is now empty."""
         if self.role != HOST:
@@ -1136,6 +1171,19 @@ class Session:
                 self._accepted_invitation(peer)
             elif kind in TRADE_TO_HOST and peer.player_id in self.remotes:
                 self._host_trade(game, peer.player_id, kind, data)
+            elif kind in ("pqa", "pqc") and peer.player_id in self.remotes:
+                self._party_quest_asked(game, peer.player_id, kind, data)
+
+    def _party_quest_asked(self, game, player_id, kind, data):
+        """A guest wants to take a quest on for the party, or hand it in.
+
+        Only *which* quest is taken from the asker; whether it can be, and
+        what anybody is paid, is the host's to decide (0cj).
+        """
+        hook = getattr(game, "party_quest_taken" if kind == "pqa"
+                       else "party_quest_handed_in", None)
+        if callable(hook):
+            hook(player_id, sec.safe_str(data.get("k"), 24))
 
     def _greet(self, game, peer, data):
         """Accept a player, or turn them away with a reason."""
@@ -1243,6 +1291,13 @@ class Session:
         remote = self.remotes.get(player_id)
         if remote is not None:
             remote.body = body
+            # **The name they made, not the one they knocked with** (s96).
+            # A first visit says hello as "Newcomer" - there is no hero
+            # yet - and the hero is made after; the room went on calling
+            # them Newcomer in every "left", "opened a chest" and "took
+            # on" for as long as they stayed. Found screenshotting 0cj.
+            if body.get("name"):
+                remote.name = _safe_name(body.get("name"))
         if self.role == HOST:
             self.transport.broadcast("body", {"id": player_id, "p": body},
                                      skip=relay_from)
@@ -1407,6 +1462,15 @@ class Session:
                 self._fight_closed(game, data)
             elif kind in TRADE_TO_PLAYER:
                 self._client_trade(game, kind, data)
+            elif kind == "pq":
+                hook = getattr(game, "party_quest_heard", None)
+                if callable(hook):
+                    hook(sec.safe_dict(data))
+            elif kind == "pqd":
+                hook = getattr(game, "party_quest_done", None)
+                if callable(hook):
+                    hook(sec.safe_str(data.get("k"), 24),
+                         _safe_name(data.get("by")))
         # **A host that leaves ends the room** (s96). The check above only
         # runs before the welcome, so once a guest was in, a closed
         # socket went unnoticed: the host dropped off the list twelve
