@@ -19875,6 +19875,49 @@ class TestAWardenTurnsTheChapter(unittest.TestCase):
         self.assertNotEqual(game.state, G.CHAPTER_CARD)
         self.assertIsNone(game.chapter_card)
 
+class TestTheLogSpeaksToYou(unittest.TestCase):
+    """s96. "You is stunned and cannot move." "You suffers 3 from Bleed."
+    `Battle.verb` exists so a line about the player reads "You hit" and
+    one about Kess reads "Kess hits" - and seven lines built their own
+    sentence without it. Found in a smoke check's fight log."""
+
+    def battle(self, *names):
+        from pixel_rpg.battle import Battle
+        from pixel_rpg.entities import Player, make_enemy
+        party = [Player(name, "warden") for name in names]
+        fight = Battle(party, [make_enemy(3, "meadow")])
+        fight.turn = "player"
+        return fight, party
+
+    def turn_with(self, fight, member):
+        """A stunned start, then the end of a turn, where statuses tick."""
+        member.hp = member.max_hp() // 2
+        member.add_status("stun", 1)
+        fight.start_turn()                       # the turn is lost
+        for key in ("bleed", "regen"):
+            member.add_status(key, 3)
+        fight.end_turn()
+        return "\n".join(fight.log)
+
+    def test_you_are_stunned_and_suffer(self):
+        fight, (hero,) = self.battle("Hero")
+        self.assertIs(fight.you, hero)
+        log = self.turn_with(fight, hero)
+        self.assertIn("You are stunned and cannot move.", log)
+        self.assertRegex(log, r"You suffer \d+ from Bleed")
+        self.assertRegex(log, r"You regain \d+ HP")
+        for wrong in ("You is ", "You suffers", "You regains", "You falls",
+                      "You was ", "You shrugs", "revives You"):
+            self.assertNotIn(wrong, log)
+
+    def test_somebody_else_is_stunned_and_suffers(self):
+        fight, (hero, kess) = self.battle("Hero", "Kess")
+        fight.acting_player = 1
+        log = self.turn_with(fight, kess)
+        self.assertIn("Kess is stunned and cannot move.", log)
+        self.assertRegex(log, r"Kess suffers \d+ from Bleed")
+
+
 class TestOneQuestBetweenTwoPeople(unittest.TestCase):
     """0cj, his (2026-08-24): *"one quest between two people."* The
     arithmetic the host does for a story room's shared quest, and what a

@@ -779,10 +779,14 @@ class Battle:
         if (self.turn == "player" and self.stun_immune_for(actor)
                 and actor.has_status("stun")):
             actor.statuses.remove(actor.get_status("stun"))
-            self.say("The Cornerstone holds. %s shrugs it off."
-                     % self.name_of(actor))
+            self.say("The Cornerstone holds. %s %s it off."
+                     % (self.name_of(actor),
+                        self.verb(actor, "shrug", "shrugs")))
         if actor.has_status("stun"):
-            self.say("%s is stunned and cannot move." % self.name_of(actor))
+            # Through `verb`, like every other line about somebody: the
+            # player read "You is stunned" (s96, found in a smoke log).
+            self.say("%s %s stunned and cannot move."
+                     % (self.name_of(actor), self.verb(actor, "are", "is")))
             self.emit("sfx", name="error")
             status = actor.get_status("stun")
             if status:
@@ -835,12 +839,16 @@ class Battle:
         for kind, key, amount in actor.tick_statuses():
             info = STATUSES.get(key)
             if kind == "damage":
-                self.say("%s suffers %d from %s." %
-                         (self.name_of(actor), amount, info.name))
+                self.say("%s %s %d from %s." %
+                         (self.name_of(actor),
+                          self.verb(actor, "suffer", "suffers"),
+                          amount, info.name))
                 self.emit("float", who=side, index=index,
                           text="-%d" % amount, color=info.color)
             elif kind == "heal":
-                self.say("%s regains %d HP." % (self.name_of(actor), amount))
+                self.say("%s %s %d HP." % (self.name_of(actor),
+                                           self.verb(actor, "regain",
+                                                     "regains"), amount))
                 self.emit("float", who=side, index=index,
                           text="+%d" % amount, color=info.color)
         if self.check_deaths():
@@ -899,7 +907,8 @@ class Battle:
             if member.revive_charge:
                 member.revive_charge = False
                 member.hp = max(1, member.max_hp() // 2)
-                self.say("Phoenix Down revives %s!" % self.name_of(member))
+                self.say("Phoenix Down revives %s!"
+                         % ("you" if member is self.you else member.name))
                 self.emit("sfx", name="levelup")
                 self.emit("float", who="player", index=index, text="REVIVED",
                           color=(250, 180, 90))
@@ -912,7 +921,8 @@ class Battle:
                 self.fallen.add(index)
                 self.play_motion("player", index,
                                  anim.death_move(*self.last_blow))
-                self.say("%s falls." % self.name_of(member))
+                self.say("%s %s." % (self.name_of(member),
+                                     self.verb(member, "fall", "falls")))
 
         # The party loses when nobody is left standing, not when one falls.
         if not self.standing():
@@ -1137,7 +1147,9 @@ class Battle:
         if timing != 1.0:
             result.amount = max(1, int(round(result.amount * timing)))
         if forced:
-            self.say("%s was already behind them." % self.name_of(self.actor))
+            self.say("%s %s already behind them."
+                     % (self.name_of(self.actor),
+                        self.verb(self.actor, "were", "was")))
         # **Runeblade** (s52): a Spellblade's ordinary swing carries magic
         # with it. Folded into the same hit rather than dealt as a second
         # one, because two damage numbers off one swing reads as a bug and

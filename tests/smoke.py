@@ -2985,12 +2985,22 @@ def a_group_fight_resolves(g):
     g.player.hp = g.player.max_hp()
     g.player.mp = g.player.max_mp()
     before_gold = g.player.gold
-    foes = [make_enemy(1, "meadow", g.settings.mods) for _ in range(3)]
-    for foe in foes:
-        foe.hp = 1
-    g.start_battle(foes)
-    assert len(g.battle.enemies) == 3, "group was not kept"
-    drive_battle(g, lambda g_, b: g_.handle_event(key(pygame.K_1)))
+    # **On a stream of its own** (s96). One hit of health is not a decided
+    # fight when the pack can stun and regenerate: when two checks were
+    # added before this one, the shared stream rolled a Storm Wisp that
+    # stunned the hero, healed 2 a turn and outlasted a bleed, and the
+    # "victory" was the hero waking at the shrine. Forty fresh fights won
+    # forty - the dice were rare, not wrong - so the check stops depending
+    # on which checks ran first, rather than on luck.
+    from pixel_rpg.util import rng
+    with rng.forked(1):
+        foes = [make_enemy(1, "meadow", g.settings.mods) for _ in range(3)]
+        for foe in foes:
+            foe.hp = 1
+        g.start_battle(foes)
+        assert len(g.battle.enemies) == 3, "group was not kept"
+        drive_battle(g, lambda g_, b: g_.handle_event(key(pygame.K_1)))
+    assert g.state != "gameover", "the hero lost a fight against one-hit monsters"
     assert g.state != G.BATTLE, "group fight never resolved"
     assert all(not f.alive for f in foes), "a monster survived a victory"
     assert g.player.gold > before_gold, "no gold from a group"
