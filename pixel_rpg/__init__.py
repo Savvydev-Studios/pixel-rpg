@@ -46,4 +46,4 @@
 #         and the arena choice where a run is chosen (s80).
 # 4.26.0: wardens are fought by the whole room (decision 4, at last),
 #         and the party strip carries level and magic (s81).
-__version__ = "4.44.3"
+__version__ = "4.44.4"

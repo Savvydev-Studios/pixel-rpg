@@ -1008,6 +1008,14 @@ class Session:
                 hook(sec.safe_str(data.get("why"), 60))
 
     def close(self):
+        # **A host takes its guests out of its fight on the way out** (0cl).
+        # One guest dropping is `_expire`'s, one at a time, as fleeing; the
+        # host's own connection failing came here, cleared every remote at
+        # once and told the fight nothing - so the host's battle sat
+        # waiting on turns from people who were no longer there. Before the
+        # remotes go, while `fight` still says who sat where.
+        for player_id in list(self.remotes):
+            self._left_the_fight(player_id)
         # Give the router its port back rather than leaving a hole open for
         # the six hours the lease would otherwise run.
         if self.portal is not None:

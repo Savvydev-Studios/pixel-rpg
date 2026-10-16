@@ -2857,6 +2857,43 @@ def a_dropped_fighter_does_not_hang_the_fight(_g):
             game.leave_coop()
 
 
+def a_host_whose_own_connection_fails_finishes_its_fight(_g):
+    """0cl. A guest dropping out of the host's fight counts as fleeing
+    (the check above calls that by hand). The *host's* own connection
+    failing cleared every guest at once and told the fight nothing, so
+    the host's battle waited on turns that could never come. Here the
+    host's socket fails mid-fight the way a dead connection does - its
+    next pump raises - and the game finds out by itself."""
+    host, guest = _room()
+    try:
+        _stand_together(host, guest)
+        _fight_together(host, guest, frames=4)
+        _until_someones_turn(host, guest)
+        battle = host.battle
+        assert len(battle.players) == 2
+        gone = host.coop.fight["party"].index(guest.coop.player_id)
+
+        def dead():
+            raise OSError("network is unreachable")
+        host.coop.transport.pump = dead
+        for _ in range(3):
+            host.update(1 / 30)
+        assert host.coop is None, "the host never noticed its room was gone"
+        assert host.battle is battle, "the host's own fight was thrown away"
+        assert gone in battle.fled, "the host's fight still counts the guest in"
+        for _ in range(240):
+            host.update(1 / 30)
+            if host.battle is not battle or battle.finished:
+                break
+            assert not (battle.phase == G.BATTLE_MENU
+                        and battle.turn == "player"
+                        and battle.acting_player == gone), (
+                "the host's fight is waiting on a guest who is not there")
+    finally:
+        for game in (host, guest):
+            game.leave_coop()
+
+
 def a_group_fight_resolves(g):
     """A pack must actually die, pay out, and hand the world back.
 
@@ -3185,6 +3222,8 @@ def run():
           lambda: a_client_cannot_move_for_somebody_else(g))
     check("a dropped fighter does not hang the fight",
           lambda: a_dropped_fighter_does_not_hang_the_fight(g))
+    check("a host whose own connection fails finishes its fight",
+          lambda: a_host_whose_own_connection_fails_finishes_its_fight(g))
     check("a group fight resolves", lambda: a_group_fight_resolves(g))
     check("targeting a group", lambda: targeting_a_group(g))
     check("story choices are recorded",
