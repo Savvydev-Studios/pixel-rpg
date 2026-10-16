@@ -41,8 +41,24 @@ def first_int(text):
     return m.group(0) if m else None
 
 
+def find_handoff():
+    """The handoff lives in a private repository of its own (DEVELOPING.md),
+    cloned into `notes/` here. A copy at the root is the old place, and is
+    still read so a checkout from before the move keeps working."""
+    for path in (os.path.join(ROOT, "notes", "HANDOFF.md"),
+                 os.path.join(ROOT, "HANDOFF.md")):
+        if os.path.isfile(path):
+            return path
+    return None
+
+
 def main():
-    handoff = open(os.path.join(ROOT, "HANDOFF.md"), encoding="utf-8").read()
+    path = find_handoff()
+    if path is None:
+        print("HANDOFF.md not found. It is not in this repository: clone the")
+        print("notes into notes/ first (see DEVELOPING.md).")
+        return 2
+    handoff = open(path, encoding="utf-8").read()
 
     # -- section 4, the content table --------------------------------------
     table = {}

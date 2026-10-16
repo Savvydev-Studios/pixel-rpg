@@ -58,3 +58,10 @@ pixel-rpg_*.deb
 shots/
 shots_ui/
 shots_new/
+
+# --- The project notes: a private repository of their own ------------------
+# HANDOFF.md is not part of the game and is not published with it. It lives
+# in Savvydev-Studios/pixel-rpg-notes, cloned into notes/ (DEVELOPING.md).
+# The root copy is the old place, from before the move.
+HANDOFF.md
+/notes/
