@@ -16,7 +16,7 @@ from .config import DIFFICULTIES
 from .entities import ATTRIBUTE_HELP, ATTRIBUTE_LABEL, ATTRIBUTES
 from . import __version__
 from .items import (CONSUMABLES, RARITY_ORDER, SALVAGE_NAME, SHORT,
-                    apply_upgrade, roll_item, salvage_yield, sell_price,
+                    apply_upgrade, salvage_yield, sell_price,
                     shop_stock, upgrade_cost, upgrade_materials)
 from .quests import (ACHIEVEMENTS, ACHIEVEMENTS_BY_KEY, QUESTS_BY_KEY)
 from .save import format_playtime
@@ -2198,15 +2198,23 @@ def quests_event(game, event):
             gold, xp, ilvl = reward
             player.gold += gold
             player.stats_tracker["gold_earned"] += gold
-            levels, new_skills = player.gain_xp(xp)
-            game.toast("Reward: %d g, %d xp" % (gold, xp), ACCENT, 3.5)
-            if ilvl and not player.bag_full():
-                item = roll_item(ilvl, luck=0.35)
-                player.add_item(item)
-                game.toast("Reward item: %s" % item.name, item.color, 4.0)
+            with game.questions_held():
+                levels = game.earn_xp(xp)
+                game.toast("Reward: %d g, %d xp" % (gold, xp), ACCENT, 3.5)
+                if ilvl:
+                    # Through `roll_loot`, which is the only roll that
+                    # remembers Brittle Steel - this one went round it.
+                    item = game.roll_loot(ilvl, luck=0.35)
+                    if game.pocket(item, "quest"):
+                        game.toast("Reward item: %s" % item.name,
+                                   item.color, 4.0)
             if levels:
                 game.toast("Level %d!" % player.level, GOOD, 4.0)
             game.sfx("levelup")
+            if game.questions:
+                # Asked over the board, and back to it after the last.
+                game.ask_held_then(lambda: game.go("quests"))
+                return
         state.quest.clamp_to(len(quest_rows(game)))
 
 
@@ -2978,7 +2986,14 @@ def draw_dialogue(game):
     # left-hand edge, so the label gives way rather than the button.
     # The two are split *at* the centre, not centred as a pair, so each one
     # gets half the box and not the whole of it.
-    back_w = min(132, max(40, box.right - box.centerx - 24))
+    # Escape's button says where it goes when the dialogue says so - a
+    # runner's errand opens their board rather than walking off (s96). As
+    # wide as "Back" always was, wider only for a longer label.
+    back_label = data.get("back", "Back")
+    esc = assets.font("small").size("Esc  ")[0] + 11
+    back_w = min(max(40, box.right - box.centerx - 24),
+                 max(132, assets.font("small").size(back_label)[0] + esc))
+    back_label = ellipsize(assets.font("small"), back_label, back_w - esc)
     # The `Enter  ` in front, measured, plus the padding - it was a flat 74,
     # which is exactly that in Consolas and leaves the label touching both
     # ends of its button in any wider face (§95).
@@ -2992,7 +3007,7 @@ def draw_dialogue(game):
     back_rect = pygame.Rect(box.centerx + 8, box.bottom - 50, back_w, 34)
     for rect, text, kind, tone in (
             (confirm_rect, "Enter  %s" % confirm_label, "dialogue_ok", ACCENT),
-            (back_rect, "Esc  Back", "dialogue_back", DIM)):
+            (back_rect, "Esc  %s" % back_label, "dialogue_back", DIM)):
         game.ui.hot.add(rect, kind, 0)
         if game.hover == (kind, 0):
             highlight(surface, rect, tone, fill_alpha=40, border=2)

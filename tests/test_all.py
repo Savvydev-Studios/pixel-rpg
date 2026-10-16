@@ -19875,6 +19875,373 @@ class TestAWardenTurnsTheChapter(unittest.TestCase):
         self.assertNotEqual(game.state, G.CHAPTER_CARD)
         self.assertIsNone(game.chapter_card)
 
+class TestNoPayoutDropsItsQuestions(unittest.TestCase):
+    """s96, 0cm's second half. 4.42.1 made a fight and a wave ask about a
+    full bag and a fifth skill; five other payouts still threw both away.
+    A night, a wayside, an errand, a favour and the quest board each took
+    `gain_xp`'s new skills as `_skills`, and an errand and the board rolled
+    no item at all into a full bag - which a wayside rolled, named, and
+    dropped on the floor. The board also rolled round `roll_loot`, so
+    Brittle Steel never touched a quest's reward. And a third of all
+    favours and errands sat on runners, whom E only ever took to the
+    board. Each is reached here the way a player reaches it: stand there,
+    press the key."""
+
+    def game(self, slot=6):
+        from pixel_rpg import game as G
+        _display_only()
+        game = G.Game()
+        game.meta.save = lambda: True
+        game.screen = pygame.display.set_mode((1280, 720))
+        # One island, so each test finds the errand, favour or wayside it
+        # needs: seed 1 has all of them, on villagers and runners both.
+        game.settings.seed = 1
+        game.pending_class = "warden"
+        game.new_run("Packrat", slot)
+        game.dialogue = None
+        game.scene = None
+        game.state = G.OVERWORLD
+        self.addCleanup(game.saves.delete, slot)
+        return game
+
+    def stuff(self, game):
+        from pixel_rpg.items import roll_item
+        while not game.player.bag_full():
+            game.player.add_item(roll_item(5))
+
+    def key(self, game, code):
+        game.handle_event(pygame.event.Event(
+            pygame.KEYDOWN, key=code, unicode="", mod=0))
+
+    def enter(self, game):
+        self.key(game, pygame.K_RETURN)
+
+    def escape(self, game):
+        self.key(game, pygame.K_ESCAPE)
+
+    def press_e(self, game):
+        self.key(game, game.binds.key_for("interact"))
+
+    def one_short(self, game):
+        """A Cutpurse at 11 carrying four, one point of experience from
+        the level that teaches a fifth (s53's own set-up)."""
+        hero = game.player
+        hero.class_key = "cutpurse"
+        while hero.level < 11:
+            hero.gain_xp(hero.xp_to_next())
+        hero.loadout = [s.key for s in hero.known_skills()][:4]
+        self.assertEqual(len(hero.skills()), 4)
+        hero.xp = hero.xp_to_next() - 1
+
+    def stand_beside(self, game, spot, kind):
+        """Put the hero where E finds the thing at `spot`."""
+        world = game.world
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                x, y = spot[0] + dx, spot[1] + dy
+                if ((dx, dy) == (0, 0) or not world.in_bounds(x, y)
+                        or world.blocked(x, y)):
+                    continue
+                found, target = world.interactable_near(x, y)
+                at = ((target.gx, target.gy) if found == "npc"
+                      else target)
+                if found == kind and tuple(at) == tuple(spot):
+                    game.player.x = x * game.tile + game.tile / 2
+                    game.player.y = y * game.tile + game.tile / 2
+                    return
+        self.fail("nowhere to stand that reaches %r" % (spot,))
+
+    def holder(self, game, spot):
+        return next(n.kind for n in game.world.npcs
+                    if (n.gx, n.gy) == tuple(spot))
+
+    def read_through(self, game):
+        """Back to the world: answer a conversation, leave a board."""
+        from pixel_rpg import game as G
+        for _ in range(12):
+            if game.state == G.OVERWORLD:
+                return
+            # Enter on a board takes work on; Escape is the way out.
+            if game.state == G.QUESTS:
+                self.escape(game)
+            else:
+                self.enter(game)
+
+    @staticmethod
+    def asks_with_a_button(game):
+        from pixel_rpg import game as G
+        return bool(game.state == G.DIALOGUE and game.dialogue
+                    and game.dialogue.get("on_confirm") is not None)
+
+    @staticmethod
+    def offered_a_favour(game):
+        return bool(game.scene and game.scene.get("favour"))
+
+    def talk(self, game, spot, until=None):
+        """E on somebody until `until(game)`, reading through whatever
+        they had to say first."""
+        until = until or self.asks_with_a_button
+        for _ in range(4):
+            self.stand_beside(game, spot, "npc")
+            self.press_e(game)
+            if until(game):
+                return
+            self.read_through(game)
+        self.fail("they never got past their own conversation")
+
+    def errand(self, game, kind="villager", pays_item=True):
+        """Somebody of `kind` with an errand (that pays an item), taken
+        and done."""
+        from pixel_rpg import game as G
+        from pixel_rpg.quests import ERRANDS_BY_KEY
+        for spot, key in sorted(game.world.errand_givers.items()):
+            errand = ERRANDS_BY_KEY[key]
+            if ((errand.item_ilvl or not pays_item)
+                    and errand.metric != "level"
+                    and self.holder(game, spot) == kind):
+                break
+        else:
+            self.fail("no %s here has the errand this needs" % kind)
+        if kind == "runner":
+            game.world.story_flags.add("met_runner")
+        self.talk(game, spot)
+        self.enter(game)                         # "Take it on"
+        self.assertIn(errand.key, game.quests.errands)
+        self.assertEqual(game.state, G.OVERWORLD)
+        tracker = game.player.stats_tracker
+        tracker[errand.metric] = tracker.get(errand.metric, 0) + errand.target
+        return spot, errand
+
+    def favour(self, game, kind):
+        """Where somebody of `kind` holds a favour that pays experience."""
+        from pixel_rpg import story
+        for spot, (key, _done) in sorted(game.world.favours.items()):
+            favour = story.FAVOUR_BY_KEY.get(key)
+            if (favour and favour.reward_xp and not favour.needs
+                    and self.holder(game, spot) == kind):
+                return spot
+        self.fail("no %s here holds a favour that pays" % kind)
+
+    def test_an_errand_into_a_full_bag_asks_once_its_words_are_read(self):
+        from pixel_rpg import game as G
+        game = self.game()
+        spot, _errand = self.errand(game)
+        self.stuff(game)
+        held = list(game.player.inventory)
+        self.talk(game, spot)
+        self.assertEqual(game.state, G.DIALOGUE,
+                         "the bag question went up over their thanks")
+        self.assertIn("And something out of a pocket",
+                      " ".join(game.dialogue["body"]))
+        self.escape(game)                        # Escape, not the button
+        self.assertEqual(game.state, G.FULLBAG,
+                         "a full bag lost the errand's item")
+        prize = game.ui.fullbag["item"]
+        self.enter(game)                         # drop the first, keep it
+        self.assertIn(prize, game.player.inventory)
+        self.assertEqual(len(game.player.inventory), len(held))
+        self.assertEqual(game.state, G.OVERWORLD)
+
+    def test_an_errand_that_levels_you_asks_about_the_fifth_skill(self):
+        from pixel_rpg import game as G
+        game = self.game()
+        spot, _errand = self.errand(game)
+        self.one_short(game)
+        self.talk(game, spot)
+        self.assertEqual(game.state, G.DIALOGUE)
+        self.enter(game)                         # "Nod"
+        self.assertEqual(game.state, G.NEWSKILL,
+                         "the errand's level never asked about its skill")
+        self.escape(game)                        # keep the four
+        self.assertIn(game.state, (G.OVERWORLD, G.FULLBAG))
+
+    def board_quest(self, game):
+        """A quest from the board that pays an item, taken and done, and
+        the board open on it."""
+        from pixel_rpg import menus
+        from pixel_rpg.quests import QUESTS_BY_KEY
+        quest = QUESTS_BY_KEY["scavenger"]
+        game.quests.completed.append(quest.requires)
+        self.assertTrue(game.quests.accept(quest.key, game.player))
+        tracker = game.player.stats_tracker
+        tracker[quest.metric] = tracker.get(quest.metric, 0) + quest.target
+        game.go("quests")
+        game.ui.quest_tab = 2                    # Active
+        rows = menus.quest_rows(game)
+        game.ui.quest.index = [entry.key for _kind, entry in rows].index(
+            quest.key)
+        return quest
+
+    def test_the_quest_board_asks_and_comes_back_to_the_board(self):
+        from pixel_rpg import game as G
+        game = self.game()
+        self.one_short(game)
+        self.stuff(game)
+        quest = self.board_quest(game)
+        self.enter(game)                         # hand it in
+        self.assertIn(quest.key, game.quests.completed)
+        asked = []
+        while game.state in (G.NEWSKILL, G.FULLBAG) and len(asked) < 6:
+            asked.append(game.state)
+            self.escape(game)
+        self.assertEqual(asked, [G.NEWSKILL, G.FULLBAG],
+                         "the board's skill and item were not both asked")
+        self.assertEqual(game.state, G.QUESTS,
+                         "answering threw you off the board")
+
+    def test_a_quest_reward_remembers_brittle_steel(self):
+        from unittest import mock
+        from pixel_rpg import game as G
+        game = self.game()
+        game.player.modifiers.add("brittle")
+        self.board_quest(game)
+        seen = []
+        real = G.roll_item
+
+        def watch(*args, **kwargs):
+            seen.append(kwargs.get("downgrade"))
+            return real(*args, **kwargs)
+        with mock.patch.object(G, "roll_item", watch):
+            self.enter(game)
+        self.assertEqual(seen, [1], "the quest reward went round roll_loot")
+
+    def test_a_night_asks_about_its_skill_before_its_card(self):
+        from pixel_rpg import game as G
+        game = G.Game()
+        game.meta.save = lambda: True
+        game.pending_class = "warden"
+        game.new_night_run("Nightwalker")
+        self.one_short(game)
+        game.zombies.spawned = gamemodes_count(game)
+        game.roam.foes = []
+        for _ in range(5):
+            game.update(1 / 60)
+            if game.state != "roam":
+                break
+        self.assertEqual(game.state, G.NEWSKILL,
+                         "the night's level never asked about its skill")
+        self.escape(game)
+        self.assertEqual(game.state, "spoils",
+                         "the night's card should follow the question")
+
+    def test_a_guest_is_asked_in_the_quiet_before_the_night_card(self):
+        """A guest is paid when the host announces the next night (s83).
+        A night opens empty for a few seconds (s68), and the guest's card
+        is already read in that quiet - so the skill's question goes
+        there too, before the card."""
+        from pixel_rpg import game as G
+        game = G.Game()
+        game.meta.save = lambda: True
+        game.pending_class = "warden"
+        game.new_night_run("Guest")
+        self.one_short(game)
+
+        class Room:
+            """Just enough of a guest's side of a room."""
+            player_id, role = "g", "client"
+
+            def bodies(self):
+                return {}
+
+            def __getattr__(self, _name):
+                return lambda *_a, **_k: None
+        game.coop = Room()
+        self.addCleanup(setattr, game, "coop", None)
+        game.begin_guest_night({"night": game.zombies.wave + 1,
+                                "party": ["g"]})
+        self.assertEqual(game.state, G.NEWSKILL,
+                         "a guest's night level never asked about its skill")
+        self.escape(game)
+        self.assertEqual(game.state, "spoils",
+                         "the guest's card should follow the question")
+
+    def wayside(self, game, kind):
+        """A wayside with an option of `kind`, opened with E and that
+        option chosen."""
+        from pixel_rpg import game as G
+        from pixel_rpg import story
+        for spot, (key, _done) in sorted(game.world.waysides.items()):
+            stop = story.WAYSIDE_BY_KEY.get(key)
+            if stop and any(e.get(kind) for _l, _r, e in stop.options):
+                break
+        else:
+            self.fail("no wayside on this island gives %s" % kind)
+        self.stand_beside(game, spot, "camp")
+        self.press_e(game)
+        self.assertEqual(game.state, G.SCENE)
+        effects = game.scene["wayside"]["effects"]
+        game.scene["index"] = next(i for i, e in enumerate(effects)
+                                   if e.get(kind))
+
+    def test_a_wayside_item_into_a_full_bag_is_asked_after_the_reply(self):
+        from pixel_rpg import game as G
+        game = self.game()
+        game.player.gold = 10_000            # every option affordable
+        self.stuff(game)
+        self.wayside(game, "item")
+        self.enter(game)                         # take it
+        self.assertEqual(game.state, G.SCENE,
+                         "the question went up over the wayside's reply")
+        for _ in range(6):
+            if game.state != G.SCENE:
+                break
+            self.enter(game)
+        self.assertEqual(game.state, G.FULLBAG,
+                         "the wayside's item was dropped on the floor")
+
+    def test_a_favour_that_levels_you_asks_after_the_reply(self):
+        from pixel_rpg import game as G
+        game = self.game()
+        spot = self.favour(game, "villager")
+        self.one_short(game)
+        self.talk(game, spot, until=self.offered_a_favour)
+        game.scene["index"] = min(game.scene["favour"]["right"])
+        self.enter(game)                         # the right answer
+        self.assertEqual(game.state, G.SCENE)
+        for _ in range(6):
+            if game.state != G.SCENE:
+                break
+            self.enter(game)
+        self.assertEqual(game.state, G.NEWSKILL,
+                         "the favour's level never asked about its skill")
+
+    def test_a_runner_asks_their_favour_once_you_have_met_one(self):
+        """A third of all favours and errands sit on runners (106 and 93
+        on forty islands), and E on a runner only ever opened the board:
+        none of them could be reached in play."""
+        game = self.game()
+        spot = self.favour(game, "runner")
+        self.talk(game, spot, until=self.offered_a_favour)
+        self.assertTrue(self.offered_a_favour(game))
+
+    def test_meeting_a_runner_is_still_their_introduction_first(self):
+        from pixel_rpg import game as G
+        game = self.game()
+        spot = self.favour(game, "runner")
+        self.stand_beside(game, spot, "npc")
+        self.press_e(game)
+        self.assertEqual(game.state, G.DIALOGUE)
+        self.assertEqual(game.dialogue["confirm"], "See the work")
+
+    def test_a_runner_offers_their_errand_and_escape_opens_their_board(self):
+        from pixel_rpg import game as G
+        game = self.game()
+        spot, errand = self.errand(game, kind="runner", pays_item=False)
+        game.quests.errands.remove(errand.key)   # not taken yet
+        self.talk(game, spot)
+        self.escape(game)
+        self.assertEqual(game.state, G.QUESTS,
+                         "Escape on a runner's errand left their board")
+        # Taken and under way, they are the board, not a reminder.
+        self.escape(game)
+        tracker = game.player.stats_tracker
+        tracker[errand.metric] = 0
+        self.assertTrue(game.quests.accept_errand(errand.key, game.player))
+        self.stand_beside(game, spot, "npc")
+        self.press_e(game)
+        self.assertEqual(game.state, G.QUESTS)
+
+
 class TestAPayoutAsksItsQuestions(unittest.TestCase):
     """s96, 0cm. A fight's payout opened the full-bag and new-skill
     questions and then walked straight into `enter_overworld`, so after a

@@ -867,7 +867,8 @@ class Game:
         announced = max(1, int(info.get("night") or 1))
         owed = announced > self.zombies.wave and self.zombies.wave >= 1
         if owed:
-            self.pay_for_night(self.zombies)
+            with self.questions_held():
+                self.pay_for_night(self.zombies)
         self.zombies.wave = announced
         self.roam = freeroam.FreeRoam(
             self.player, [], on_event=self.on_roam_event,
@@ -879,11 +880,17 @@ class Game:
         self.state = ROAM
         self.toast("Night %d." % self.zombies.wave, ACCENT, 2.4)
         if owed:
-            # **The same card the host is taking** (item 0bs). A night
-            # opens empty and nothing arrives for a few seconds (§68), so
-            # this is read in the quiet the mode already leaves.
-            self.offer_spoils(then="guest_night")
+            # A fifth skill first, then the card - both in the quiet below.
+            self.ask_held_then(self.into_the_guest_night)
         return True
+
+    def into_the_guest_night(self):
+        """**The same card the host is taking** (item 0bs). A night opens
+        empty and nothing arrives for a few seconds (§68), so this - and a
+        fifth skill's question before it - is read in the quiet the mode
+        already leaves. Back in the night if there is no card."""
+        self.state = ROAM
+        self.offer_spoils(then="guest_night")
 
     def roam_remote_input(self, player_id, dx, dy, swing, dodge, skill):
         """Host side: one guest pushed a key (item 0bg).
@@ -1107,11 +1114,16 @@ class Game:
         run = self.zombies
         if run is None:
             return
-        self.pay_for_night(run)
-        # **The night's one card** (items 0bs/0bu). A Last Stand stops
-        # and hands you three; a night hands you one of four mixed and
-        # opens. Taking it is what starts the next night, so the arena
-        # is not standing empty while somebody reads.
+        with self.questions_held():
+            self.pay_for_night(run)
+        # A fifth skill is asked about before the card, as a wave's is.
+        self.ask_held_then(self.after_the_night)
+
+    def after_the_night(self):
+        """**The night's one card** (items 0bs/0bu). A Last Stand stops
+        and hands you three; a night hands you one of four mixed and
+        opens. Taking it is what starts the next night, so the arena
+        is not standing empty while somebody reads."""
         if not self.offer_spoils(then="night"):
             self.begin_night()
 
@@ -1125,7 +1137,7 @@ class Game:
         being watched.
         """
         reward = run.clear_night()
-        levels, _skills = self.player.gain_xp(int(reward.get("xp", 0)))
+        levels = self.earn_xp(int(reward.get("xp", 0)))
         self.player.gold += int(reward.get("gold", 0))
         healed = self.player.heal(int(self.player.max_hp() * 0.35))
         self.player.restore_mp(int(self.player.max_mp() * 0.5))
@@ -2728,6 +2740,55 @@ class Game:
         self.questions.append((kind, payload))
         if self.holding_questions or self.state in (FULLBAG, NEWSKILL):
             return
+        self.next_question()
+
+    def ask_held_then(self, then=None):
+        """Ask what a payout held back, then carry on to `then`.
+
+        With nothing waiting, `then` runs at once - so a payout calls this
+        whatever it paid, and `wave_cleared`'s shape is the only shape.
+        """
+        self.after_questions = then
+        self.next_question()
+
+    def earn_xp(self, xp):
+        """Experience from anything that is not a fight, and its skills.
+
+        **Five payouts threw the skills away** (0cm's second half): a night,
+        a wayside, an errand, a favour and the quest board each took
+        `gain_xp`'s new skills as `_skills` and never offered them, so a
+        hero who levelled there was never asked s53's question. Returns
+        the levels gained; the questions wait for the caller to ask them.
+        """
+        if self.player is None or int(xp) <= 0:
+            return 0
+        levels, skills = self.player.gain_xp(int(xp))
+        for skill in skills:
+            self.learned_skill(skill)
+        return levels
+
+    def pocket(self, item, source=""):
+        """`take_item` without its toast, for a payout that names the item.
+
+        True when it is in the bag. **A full bag asks**, where an errand
+        and the quest board used to roll nothing at all and a wayside
+        rolled the item, named it, and dropped it on the floor.
+        """
+        if item is None or self.player is None:
+            return False
+        if self.player.add_item(item):
+            return True
+        self.ask(FULLBAG, {"item": item, "source": source})
+        return False
+
+    def after_the_words(self):
+        """Close a dialogue that paid something, onto what it asked.
+
+        On Escape as well as on its button: a dialogue's Escape skips its
+        `on_confirm`, so a question hung on that alone is a question one
+        key loses.
+        """
+        self.state = OVERWORLD
         self.next_question()
 
     @contextlib.contextmanager
@@ -5589,7 +5650,21 @@ class Game:
         if not 0 <= index < len(effects):
             return
         effect = effects[index]
-        self.apply_wayside(stop, effect)
+        with self.questions_held():
+            self.apply_wayside(stop, effect)
+        self.questions_after_the_reply()
+
+    def questions_after_the_reply(self):
+        """A scene that paid something asks once its reply is read.
+
+        Asked at once, the question would be drawn over by the reply
+        `answer_scene` puts up next. Whatever the scene meant to do after
+        - a wayside's fight - still happens, after the last answer.
+        """
+        if not self.questions or not self.scene:
+            return
+        then = self.scene.get("after")
+        self.scene["after"] = lambda: self.ask_held_then(then)
 
     def apply_wayside(self, stop, effect):
         """What one wayside option actually does.
@@ -5622,13 +5697,12 @@ class Game:
             # off it - the funnel §54 built exists so no call site can
             # forget the modifier.
             item = self.roll_loot(max(1, self.player.level))
-            if item is not None:
-                self.player.add_item(item)
+            if self.pocket(item, "wayside"):
                 told.append(item.name)
         xp = int(effect.get("xp", 0))
         levels = []
         if xp:
-            levels, _skills = self.player.gain_xp(xp)
+            levels = self.earn_xp(xp)
             told.append("%d xp" % xp)
         if told:
             self.toast(", ".join(told), ACCENT, 3.5)
@@ -5893,19 +5967,23 @@ class Game:
         gold, xp, ilvl = reward
         self.player.gold += gold
         self.player.stats_tracker["gold_earned"] += gold
-        levels, _skills = self.player.gain_xp(xp)
         voice = story.errand_voice(errand.key)
         body = list(voice.done) + [""] if voice else ["It is done.", ""]
         body.append("%d gold, %d experience." % (gold, xp))
-        if ilvl and not self.player.bag_full():
-            item = self.roll_loot(ilvl, luck=0.3)
-            self.player.add_item(item)
-            body.append("And something out of a pocket: %s." % item.name)
+        with self.questions_held():
+            levels = self.earn_xp(xp)
+            if ilvl:
+                # Named even when the bag is full: it is still handed over,
+                # and the bag question comes once the words are read.
+                item = self.roll_loot(ilvl, luck=0.3)
+                self.pocket(item, "errand")
+                body.append("And something out of a pocket: %s." % item.name)
         self.player.stats_tracker["errands"] = (
             self.player.stats_tracker.get("errands", 0) + 1)
         self.log.event("errand_done", key=errand.key)
         self.dialogue = {"title": npc.name, "body": body,
-                         "confirm": "Nod", "on_confirm": None}
+                         "confirm": "Nod", "on_confirm": self.after_the_words,
+                         "on_cancel": self.after_the_words}
         self.go(DIALOGUE)
         if levels:
             self.toast("Level %d!" % self.player.level, GOOD, 4.0)
@@ -5974,9 +6052,9 @@ class Game:
         if favour.reward_gold:
             self.player.gold += favour.reward_gold
             self.player.stats_tracker["gold_earned"] += favour.reward_gold
-        levels = []
-        if favour.reward_xp:
-            levels, _skills = self.player.gain_xp(favour.reward_xp)
+        with self.questions_held():
+            levels = self.earn_xp(favour.reward_xp)
+        self.questions_after_the_reply()
         self.player.stats_tracker["favours"] = (
             self.player.stats_tracker.get("favours", 0) + 1)
         self.log.event("favour", key=favour.key)
@@ -6042,10 +6120,25 @@ class Game:
         self.state = DIALOGUE
 
     def talk_to_runner(self, npc):
-        """A courier carries Maren's work out to the roads."""
+        """A courier carries Maren's work out to the roads.
+
+        **And asks for things, like anybody** (s96). The world hands
+        runners favours and errands along with the villagers - it even
+        picks which errands suit somebody who walks the valley for a
+        living - and E on a runner only ever opened the board, so every
+        one of them was out of reach: a third of all favours and errands,
+        106 and 93 on forty islands. After their introduction theirs come
+        first; the board is what they carry, so it is never more than one
+        Escape away (`runner_errand`).
+        """
         self.ui.quest_readonly = False
         self.ui.quest_tab = 1          # Offered, for the same reason
         self.ui.quest.index = self.ui.quest.offset = 0
+        # Looked at, not `flag()`ed: that is one-shot, and asking it here
+        # would spend the introduction below before it was ever said.
+        met = "met_runner" in self.world.story_flags
+        if met and (self.play_favour(npc) or self.runner_errand(npc)):
+            return
         if self.world.flag("met_runner"):
             self.dialogue = {
                 "title": npc.name,
@@ -6059,6 +6152,29 @@ class Game:
             self.state = DIALOGUE
             return
         self.go(QUESTS)
+
+    def runner_errand(self, npc):
+        """A runner's own errand, without standing between you and the board.
+
+        Offered until taken, and paid out when done. While you are still
+        at it, the runner is the board, not a reminder: a villager's
+        *"2 of 6 so far"* is somebody asking after their own errand, and a
+        runner saying it every time would hide the work they carry. The
+        same when you are carrying all you can. Escape on the offer opens
+        the board rather than walking off.
+        """
+        errand = self.world.errand_at(npc.gx, npc.gy)
+        log = self.quests
+        if errand is None or errand.key in log.completed:
+            return False
+        if errand.key in log.errands:
+            done, target = log.progress(self.player, errand.key)
+            return done >= target and self.offer_errand(npc)
+        if log.errands_full() or not self.offer_errand(npc):
+            return False
+        self.dialogue["on_cancel"] = lambda: self.go(QUESTS)
+        self.dialogue["back"] = "The board"
+        return True
 
     def talk_to_smith(self):
         """Bram. Sixty-one years old, brother of a man three centuries gone."""
