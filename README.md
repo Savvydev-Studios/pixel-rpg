@@ -12,8 +12,17 @@ a single image or sound file in this repository.
 
 ## Playing it
 
-**Double-click `run.bat`** — or `Pixel_RPG.exe` directly. Nothing to install.
-The newest `Pixel_RPG.exe` is on the repository's **Releases** page.
+**[Download the game](https://github.com/Savvydev-Studios/pixel-rpg/releases/latest)**
+from the repository's **Releases** page (the right-hand side of its front
+page): `Pixel_RPG.exe` for Windows, a `.deb` for a Chromebook or Linux.
+Nothing to install - Python, pygame and SDL are inside.
+
+The exe is not signed, so the first time, Windows may say *"Windows
+protected your PC"*: choose **More info**, then **Run anyway**. Your
+browser may ask whether to keep the download, too.
+
+In a copy of this folder, **double-click `run.bat`** — or `Pixel_RPG.exe`
+directly.
 
 If a `Pixel_RPG.new.exe` ever appears, it is a build made while the game was
 open. Close the game and run `update.bat` to swap it in; saves are untouched.
