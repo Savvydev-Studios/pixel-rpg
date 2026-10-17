@@ -19799,6 +19799,11 @@ class TestAWardenTurnsTheChapter(unittest.TestCase):
     player gets there: the portal, the dialogue, Enter, the fight."""
 
     def beat_the_first_warden(self):
+        return self.beat_a_warden(0)
+
+    def beat_a_warden(self, index):
+        """Fight warden `index` to its end through the portal, with the
+        ones before it already down, recording every state on screen."""
         import sys
         import os
         sys.path.insert(0, os.path.join(os.path.dirname(
@@ -19819,11 +19824,16 @@ class TestAWardenTurnsTheChapter(unittest.TestCase):
         game.state = G.OVERWORLD
         self.addCleanup(game.saves.delete, 6)
         hero = game.player
-        for _ in range(3):
+        portal = game.world.portals[index]
+        for earlier in game.world.portals[:index]:
+            earlier.unlocked = earlier.defeated = True
+        portal.unlocked = True
+        game.world.settle_portals()
+        level = 4 if index == 0 else G.BOSS_BY_KEY[portal.boss_key].level
+        while hero.level < level:
             hero.gain_xp(hero.xp_to_next())
         balance.spend_points(hero)
         hero.hp, hero.mp = hero.max_hp(), hero.max_mp()
-        portal = game.world.portals[0]
         game.enter_portal(portal)
         enter = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN,
                                    unicode="", mod=0)
@@ -19860,20 +19870,80 @@ class TestAWardenTurnsTheChapter(unittest.TestCase):
         self.assertIsNone(game.chapter_card)
         self.assertIsNone(game.after_card)
 
-    def test_the_finale_is_left_as_it_was(self):
-        """0ck is his: with the Door opening on the kill, chapter seven's
-        card ("see Maren first") must not stand in front of it."""
+    def test_the_sixth_warden_turns_the_chapter_and_the_door_waits(self):
+        """0ck, his (2026-10-17): *"maren should do it."* The kill used to
+        open the Door straight after the last words, so chapter seven -
+        *"Maren asked you to see her first"* - and her confession never
+        happened on a first run. Now the card turns, the Door stands, and
+        the arrow points at her."""
         from pixel_rpg import game as G
-        game, _portal, _seen = self.beat_the_first_warden()
-        game.chapter_card = object()
-        game.pending_epitaph = None
-        game.pending_ending = True
-        opened = []
-        game.open_ending_choice = lambda: opened.append(True)
-        game.after_the_fight()
-        self.assertEqual(opened, [True])
-        self.assertNotEqual(game.state, G.CHAPTER_CARD)
-        self.assertIsNone(game.chapter_card)
+        game, portal, seen = self.beat_a_warden(5)
+        self.assertTrue(portal.defeated)
+        self.assertIn(G.CHAPTER_CARD, seen, seen)
+        self.assertNotIn(G.ENDING_CHOICE, seen, "the kill opened the Door")
+        self.assertEqual(game.state, G.OVERWORLD)
+        self.assertEqual(game.player.chapter_seen, 7)
+        self.assertIsNone(game.scene)
+        self.assertEqual(game.world.props.get((portal.gx, portal.gy)),
+                         "portal", "the Door came off the map")
+        self.assertEqual(game.objective()[2], "Elder Maren")
+
+    def test_maren_and_then_the_door(self):
+        """Her confession - whose answers lean the Door (s33) - and then
+        the arrow is on the Door, and E there opens it."""
+        from pixel_rpg import game as G
+        game, portal, _seen = self.beat_a_warden(5)
+        game.talk_to_elder()
+        self.assertEqual(game.state, G.SCENE)
+        self.assertEqual(game.scene["scene"].key, "maren_6")
+        enter = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN,
+                                   unicode="", mod=0)
+        for _ in range(12):
+            if game.state != G.SCENE:
+                break
+            game.handle_event(enter)
+        game.state = G.OVERWORLD                 # off her board
+        self.assertEqual(game.objective()[2], "The Door")
+        game.enter_portal(portal)
+        self.assertEqual(game.state, G.SCENE)
+        self.assertEqual(game.scene["scene"].key, "door")
+
+    def test_a_memory_that_costs_health_does_not_leave_you_above_it(self):
+        """Ysolde's Memory takes a tenth of your maximum, and taking it left
+        health where it was: 1040 / 936 on the HUD after the last warden.
+        Equipping and respeccing already clamped; a relic did not."""
+        from pixel_rpg import story
+        from pixel_rpg.entities import Player
+        hero = Player("Whole", "warden")
+        for warden in story.WARDENS:
+            # Rested to full between wardens, as a player is.
+            hero.hp, hero.mp = hero.max_hp(), hero.max_mp()
+            hero.add_relic(warden.memory_key)
+            self.assertLessEqual(hero.hp, hero.max_hp(), warden.memory_key)
+            self.assertLessEqual(hero.mp, hero.max_mp(), warden.memory_key)
+
+    def test_a_beaten_warden_is_off_the_map_after_a_reload_too(self):
+        """One rule for a kill and a load (0ck's snag): the session took a
+        beaten warden's stone away and a reload put it back."""
+        from pixel_rpg import game as G
+        _display_only()
+        game = G.Game()
+        game.meta.save = lambda: True
+        game.pending_class = "warden"
+        game.new_run("Reloader", 6)
+        self.addCleanup(game.saves.delete, 6)
+        first, door = game.world.portals[0], game.world.portals[-1]
+        for portal in game.world.portals:
+            portal.unlocked = portal.defeated = True
+        game.world.settle_portals()
+        self.assertNotIn((first.gx, first.gy), game.world.props)
+        self.assertTrue(game.save_run(force=True))
+        self.assertTrue(game.load_run(6))
+        self.assertNotIn((first.gx, first.gy), game.world.props,
+                         "a reload put a beaten warden's stone back")
+        self.assertEqual(game.world.props.get((door.gx, door.gy)), "portal",
+                         "the Door is gone after a reload")
+
 
 class TestTheLogSpeaksToYou(unittest.TestCase):
     """s96. "You is stunned and cannot move." "You suffers 3 from Bleed."

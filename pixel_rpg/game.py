@@ -335,7 +335,6 @@ class Game:
         self.ending = None
         self.reading = None          # codex entry being read full-screen
         self.pending_epitaph = None  # warden last words, shown after victory
-        self.pending_ending = False
         self.ending_options = []
         # The chapter card: what it says, and how long it has been up.
         self.chapter_card = None
@@ -3576,7 +3575,6 @@ class Game:
         self.chapter_card = None
         self.after_card = None
         self.pending_epitaph = None
-        self.pending_ending = False
         self.forget_the_questions()
         slot, self.pre_coop_slot = self.pre_coop_slot, None
         if resume_own_run and slot is not None and self.load_run(slot):
@@ -5028,27 +5026,22 @@ class Game:
         never called `on_boss_defeated` at all (see
         `finish_shared_battle`), so it had nothing to show.
 
-        **The finale is left exactly as it was**: when the kill opens the
-        Door (`pending_ending`), chapter seven's card - *"Maren asked you
-        to see her first"* - would say one thing and the Door do another.
-        Which of those is right is 0ck, his.
+        **The sixth is no different** (0ck): the card is chapter seven -
+        *"Maren asked you to see her first"* - and the Door waits for you
+        to walk to it.
         """
         self.enter_overworld()
         epitaph, self.pending_epitaph = self.pending_epitaph, None
-        follow = self.open_ending_choice if self.pending_ending else None
 
         def last_words():
             if epitaph:
-                self.play_scene(epitaph, after=follow)
-            elif follow is not None:
-                follow()
+                self.play_scene(epitaph)
 
-        if self.chapter_card is not None and follow is None:
+        if self.chapter_card is not None:
             self.after_card = last_words
             self.chapter_time = 0.0
             self.go(CHAPTER_CARD)
             return
-        self.chapter_card = None
         last_words()
 
     def grant_victory_rewards(self, enemies, rewards=None):
@@ -5160,7 +5153,7 @@ class Game:
             if portal.boss_key != key:
                 continue
             portal.defeated = True
-            self.world.props.pop((portal.gx, portal.gy), None)
+            self.world.settle_portals()
             if i + 1 < len(self.world.portals):
                 nxt = self.world.portals[i + 1]
                 nxt.unlocked = True
@@ -5186,9 +5179,14 @@ class Game:
             self.pending_epitaph = scenes_mod.WARDEN_SCENE_BY_BOSS.get(
                 boss.definition.key)
         if self.world.wardens_defeated() >= len(story.WARDENS):
+            # **The kill does not open the Door** (0ck, his, 2026-10-17:
+            # *"maren should do it"*). It opened it straight after the last
+            # words - so chapter seven's *"Maren asked you to see her
+            # first"*, her confession and the lean it carries onto the
+            # Door never happened on a first run. The Door stands; the
+            # card turns; the arrow points at her; E at the Door opens it.
             self.unlock_codex("maren")
             self.unlock_codex("cycle")
-            self.pending_ending = True
         self.save_run(silent=True, force=True)
 
     def after_battle_checks(self):
@@ -6629,7 +6627,13 @@ class Game:
                         portal.gy * self.tile + self.tile / 2,
                         "The road")
         # Every warden is down: the Door is open and Maren asked you to see
-        # her first (chapter seven, and MAREN_BRIEFINGS[6] before it).
+        # her first (chapter seven, and MAREN_BRIEFINGS[6] before it) -
+        # and once you have, the Door (0ck).
+        if "maren_6" in self.world.story_flags and self.world.portals:
+            door = self.world.portals[-1]
+            return (door.gx * self.tile + self.tile / 2,
+                    door.gy * self.tile + self.tile / 2,
+                    "The Door")
         for npc in getattr(self.world, "npcs", ()):
             if npc.kind == "elder":
                 return (npc.gx * self.tile + self.tile / 2,
@@ -8402,7 +8406,6 @@ class Game:
         taking it goes straight to that ending rather than through the
         ordinary menu, which does not know it exists.
         """
-        self.pending_ending = False
         if self.scene is None and not self.ui.door_answered:
             self.ui.door_answered = True
             self.play_scene("door", after=self.resolve_door)
@@ -8416,7 +8419,7 @@ class Game:
         last words, the Door, the choice, the ending and its records.
         A replayed Door from the codex is not an ending.
         """
-        if self.pending_ending or self.ending is not None:
+        if self.ending is not None:
             return True
         if self.state in (ENDING_CHOICE, ENDING_TEXT):
             return True

@@ -2257,6 +2257,25 @@ class World:
         offset = self.TIER_OFFSET[min(tier, len(self.TIER_OFFSET) - 1)]
         return int(clamp(player_level + offset, 1, MAX_LEVEL))
 
+    def settle_portals(self):
+        """A beaten warden's stone comes off the map - except the last,
+        which is the Door, and stays standing for you to walk to (0ck).
+
+        **One rule, for the kill and for a load.** The session popped the
+        prop when a warden fell and a reload put it back, so a beaten
+        warden's stone was open ground until you saved and solid after,
+        where E said *"This warden has already fallen."* Both ask here.
+        """
+        if not self.portals:
+            return
+        door = self.portals[-1]
+        for portal in self.portals:
+            spot = (portal.gx, portal.gy)
+            if portal.defeated and portal is not door:
+                self.props.pop(spot, None)
+            else:
+                self.props[spot] = "portal"
+
     def wardens_defeated(self):
         return sum(1 for p in self.portals if p.defeated)
 

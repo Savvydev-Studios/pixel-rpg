@@ -303,6 +303,12 @@ class Player(Combatant):
         if relic is None or key in self.relics:
             return None
         self.relics.append(key)
+        # **A relic can cost a maximum** - Ysolde's Memory takes a tenth of
+        # your health - and equipping and respeccing already clamp to the
+        # new one. This did not: every first run that reached the sixth
+        # warden finished it at 1040 / 936 (s96, seen screenshotting 0ck).
+        self.hp = min(self.hp, self.max_hp())
+        self.mp = min(self.mp, self.max_mp())
         return relic
 
     def has_relic_tag(self, tag):

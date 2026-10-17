@@ -356,6 +356,8 @@ def apply_world(world, data):
             portal.unlocked, portal.defeated = states[portal.boss_key]
     if world.portals and not any(p.unlocked for p in world.portals):
         world.portals[0].unlocked = True     # never soft-lock the run
+    # The same stones off the map as the session that beat them (0ck).
+    world.settle_portals()
 
     # Stepstones. Only the open ones are stored, and - as everywhere else
     # here - a stored coordinate looks one up rather than creating it.
