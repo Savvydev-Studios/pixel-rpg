@@ -19888,6 +19888,19 @@ class TestAWardenTurnsTheChapter(unittest.TestCase):
                          "portal", "the Door came off the map")
         self.assertEqual(game.objective()[2], "Elder Maren")
 
+    def test_the_door_waits_until_maren_has_been_heard(self):
+        """0ck, built as his "do what u think best" (2026-10-22): E at the
+        Door before her confession says so and opens nothing. Refusing
+        her stays a choice inside her scene ("Walk past her")."""
+        from pixel_rpg import game as G
+        game, portal, _seen = self.beat_a_warden(5)
+        game.enter_portal(portal)
+        self.assertEqual(game.state, G.OVERWORLD,
+                         "the Door opened before Maren")
+        self.assertIsNone(game.scene)
+        self.assertTrue(any("Maren asked you to see her first" in t.text
+                            for t in game.toasts.items))
+
     def test_maren_and_then_the_door(self):
         """Her confession - whose answers lean the Door (s33) - and then
         the arrow is on the Door, and E there opens it."""

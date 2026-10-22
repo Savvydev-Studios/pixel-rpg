@@ -5624,6 +5624,17 @@ class Game:
             self.go(DIALOGUE)
             return
         if portal.defeated and last:
+            # **The Door waits for Maren** (0ck; his "do what u think best",
+            # 2026-10-22). Chapter seven, the arrow and her briefing all
+            # send you to her first, and her confession leans the Door
+            # (s33). Refusing her is still a choice - inside her scene,
+            # "Walk past her" - so nobody loses it, and every first run
+            # meets the scene the chapter is built around.
+            if "maren_6" not in self.world.story_flags:
+                self.toast("The Door is open. Maren asked you to see her "
+                           "first.", ACCENT, 3.5)
+                self.sfx("error")
+                return
             self.open_ending_choice()
             return
         if portal.defeated:
