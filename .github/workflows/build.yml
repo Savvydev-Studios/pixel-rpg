@@ -18,6 +18,11 @@ on:
     branches: [main, "claude/**"]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish a release of this version (named after pixel_rpg/__init__.py)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -97,12 +102,22 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    # **Two ways to publish** (s96). A tag `v*` pushed to GitHub, as
+    # before - or the Actions tab: *build* -> *Run workflow* with
+    # "Publish a release" ticked, which names the release after the
+    # version in `pixel_rpg/__init__.py`. The second exists because a
+    # cloud session can push a branch but not a tag, and the exe waited
+    # on that for three weeks. A release made by hand on the Releases page
+    # is filled in rather than refused.
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.release)
     needs: [windows, linux, web]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -112,8 +127,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Pixel RPG $GITHUB_REF_NAME" \
-            --notes "Windows: download Pixel_RPG.exe and run it. Chromebook (Linux on): download the .deb for your Chromebook (amd64 for Intel/AMD, arm64 for ARM) and double-click it in Files. Nothing else to install." \
-            dist/windows/Pixel_RPG.exe dist/linux-*/pixel-rpg_*.deb dist/pixel-rpg-web.zip
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="v$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' pixel_rpg/__init__.py)"
+          fi
+          [ "$tag" != "v" ] || { echo "no version in pixel_rpg/__init__.py"; exit 1; }
+          files="dist/windows/Pixel_RPG.exe $(ls dist/linux-*/pixel-rpg_*.deb) dist/pixel-rpg-web.zip"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber $files
+          else
+            gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Pixel RPG $tag" \
+              --notes "Windows: download Pixel_RPG.exe and run it (the first time, Windows may say it protected your PC: More info, then Run anyway). Chromebook with Linux on: download the .deb for your Chromebook (amd64 for Intel/AMD, arm64 for ARM) and double-click it in Files. Nothing else to install." \
+              $files
+          fi
