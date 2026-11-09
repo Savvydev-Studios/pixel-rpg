@@ -17,6 +17,9 @@ from the repository's **Releases** page (the right-hand side of its front
 page): `Pixel_RPG.exe` for Windows, a `.deb` for a Chromebook or Linux.
 Nothing to install - Python, pygame and SDL are inside.
 
+**[Or play it in your browser](https://savvydev-studios.github.io/pixel-rpg/)** -
+no download at all. See *In a browser* below for what that version cannot do.
+
 The exe is not signed, so the first time, Windows may say *"Windows
 protected your PC"*: choose **More info**, then **Run anyway**. Your
 browser may ask whether to keep the download, too.
@@ -60,10 +63,20 @@ the Files app only opens it in the browser as text.
 
 ### In a browser
 
-`python tools/build_web.py` makes `build/web`, a page version of the game
-that any browser can open once it is on a web host - which is how a
-Chromebook without Linux plays it. Co-op does not work from a hosted page.
-See HANDOFF section 39.
+**[savvydev-studios.github.io/pixel-rpg](https://savvydev-studios.github.io/pixel-rpg/)**
+- the same version as the newest download, and how a Chromebook without
+Linux plays it. Click the page once to start (a browser will not play
+sound before a click).
+
+- **Saves stay in that browser**, on that device. Clearing the browser's
+  site data deletes them, and they do not move to the download or back.
+- **Co-op does not work from a page** - a page cannot open the connection
+  a room needs. Solo play is the whole game.
+- The page loads Python itself from `pygame-web.github.io` while it
+  starts, so a network that blocks that site shows a grey page.
+
+`python tools/build_web.py` makes the same thing locally, in `build/web` -
+a folder any static web host can serve.
 
 From source instead:
 

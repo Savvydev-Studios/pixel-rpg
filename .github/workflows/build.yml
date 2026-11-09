@@ -5,7 +5,8 @@
 #                    pixel-rpg_<version>_amd64.deb and _arm64.deb - ChromeOS
 #                    installs these from the Files app with a double-click
 #   Any browser      the web build - the only way a Chromebook with Linux
-#                    locked by a school can play at all
+#                    locked by a school can play at all - published as the
+#                    repository's GitHub Pages site too
 #
 # Every push builds all of them and keeps them as run artifacts. A tag
 # like v4.44.0 also publishes them as a GitHub Release, which is where a
@@ -108,7 +109,8 @@ jobs:
     # version in `pixel_rpg/__init__.py`. The second exists because a
     # cloud session can push a branch but not a tag, and the exe waited
     # on that for three weeks. A release made by hand on the Releases page
-    # is filled in rather than refused.
+    # is filled in rather than refused. The box also updates the website
+    # (`pages`, below).
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
       (github.event_name == 'workflow_dispatch' && inputs.release)
@@ -141,6 +143,78 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "Pixel RPG $tag" \
-              --notes "Windows: download Pixel_RPG.exe and run it (the first time, Windows may say it protected your PC: More info, then Run anyway). Chromebook with Linux on: download the .deb for your Chromebook (amd64 for Intel/AMD, arm64 for ARM) and double-click it in Files. Nothing else to install." \
+              --notes "Windows: download Pixel_RPG.exe and run it (the first time, Windows may say it protected your PC: More info, then Run anyway). Chromebook with Linux on: download the .deb for your Chromebook (amd64 for Intel/AMD, arm64 for ARM) and double-click it in Files. Nothing else to install. No download at all: play it in a browser at https://$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]').github.io/${GITHUB_REPOSITORY#*/}/" \
               $files
           fi
+
+  pages:
+    # **The browser version as a website** (2026-11-09, his "go ahead with
+    # the github pages site"): the same `web` build the release zips, at
+    # https://<owner>.github.io/<repo>/. It goes up with a release and only
+    # then, so the site is always the version the download button gives -
+    # and only from a run on `main`, because the `github-pages` environment
+    # deploys from the default branch; a tag's release leaves the site alone.
+    # Needs *Settings -> Pages -> Source: GitHub Actions*, once. Without it
+    # this job fails and the release above is unaffected: switch it on and
+    # re-run this job.
+    #
+    # Nothing here is a server. The page loads Python from
+    # pygame-web.github.io in the player's browser (a network that blocks
+    # that host gets a grey page), saves go to that browser's localStorage,
+    # and co-op cannot run from a page (handoff s39).
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.release &&
+      github.ref == 'refs/heads/main'
+    needs: release
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: web
+          path: site
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  site:
+    # **Open the website the way a player does** (s97): a real browser, one
+    # click when the page asks, and the game's own first console lines -
+    # carrying this release's version, so a page GitHub's cache kept does
+    # not pass. A grey page leaves no evidence anywhere else (s39); this
+    # prints the console and every failed request, and keeps a screenshot.
+    needs: pages
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install a browser
+        run: |
+          python -m pip install "playwright==1.64.1"
+          python -m playwright install --with-deps chromium
+      - name: Open the site and wait for the game
+        env:
+          SITE: ${{ needs.pages.outputs.url }}
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' pixel_rpg/__init__.py)
+          python tools/check_site.py "$SITE" --version "$version" --shot site.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: site-check
+          path: site.png
+          if-no-files-found: ignore
