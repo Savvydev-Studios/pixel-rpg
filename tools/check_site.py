@@ -43,9 +43,58 @@ VERSION_LINE = re.compile(r"game\s+:\s+Pixel RPG (\S+)")
 # pygbag's own prompt, in the page's info box, while it waits for a click.
 PROMPT = "Ready to start"
 
+# What the page itself shows, for a failure (s98). pygbag gives Python's
+# output - a traceback included - to a terminal it draws in the page, not
+# to the console, so that terminal is read out of the xterm that holds it.
+PAGE_STATE = """() => {
+  const out = [], box = window.infobox;
+  out.push("title: " + document.title);
+  out.push("info box: " + (box ? JSON.stringify(box.innerText)
+           + (box.style.display === "none" ? " (hidden)" : "") : "none"));
+  try { out.push("clicked through: " + !!(window.MM && window.MM.UME)); }
+  catch (e) {}
+  const canvas = document.querySelector("canvas");
+  if (canvas) out.push("canvas: " + canvas.width + "x" + canvas.height);
+  const seen = new Set();
+  function find(obj, depth) {
+    if (!obj || typeof obj !== "object" || seen.has(obj) || depth > 4
+        || ArrayBuffer.isView(obj) || obj instanceof Node) return null;
+    seen.add(obj);
+    try {
+      if (obj.buffer && obj.buffer.active && obj.buffer.active.getLine)
+        return obj;
+      for (const key of Object.keys(obj)) {
+        const hit = find(obj[key], depth + 1);
+        if (hit) return hit;
+      }
+    } catch (e) {}
+    return null;
+  }
+  let term = null;
+  for (const name of ["vm", "python", "term", "xterm", "terminal", "vt"]) {
+    try { term = term || find(window[name], 0); } catch (e) {}
+  }
+  const text = [];
+  if (term) {
+    const buf = term.buffer.active;
+    for (let i = 0; i < buf.length; i++) {
+      const line = buf.getLine(i);
+      const s = line ? line.translateToString(true) : "";
+      if (s.trim()) text.push(s);
+    }
+  } else {
+    const rows = document.querySelector(".xterm-rows");
+    if (rows) text.push(...rows.innerText.split("\\n").filter(s => s.trim()));
+  }
+  out.push(text.length ? "terminal, last lines:" : "terminal: not found");
+  for (const s of text.slice(-40)) out.push("  " + s);
+  return out;
+}"""
+
 
 def attempt(browser, url, timeout, shot):
-    """One visit. Returns (version seen or None, started, console, failed)."""
+    """One visit. Returns (version seen or None, started, console, failed,
+    what the page showed)."""
     console, failed = [], []
     page = browser.new_page(viewport={"width": 1280, "height": 720})
     page.on("console", lambda message: console.append(message.text))
@@ -75,12 +124,17 @@ def attempt(browser, url, timeout, shot):
     if STARTED in "\n".join(console):
         page.wait_for_timeout(5000)
     page.screenshot(path=shot)
+    try:
+        state = page.evaluate(PAGE_STATE)
+    except Exception as error:                        # noqa: BLE001
+        state = ["could not read the page: %s" % error]
     page.close()
 
     text = "\n".join(console)
     found = VERSION_LINE.search(text)
     return (found.group(1) if found else None,
-            STARTED in text and "Traceback" not in text, console, failed)
+            STARTED in text and "Traceback" not in text, console, failed,
+            state)
 
 
 def main():
@@ -108,7 +162,7 @@ def main():
         browser = getattr(playwright, args.engine).launch(
             executable_path=args.executable, args=flags.get(args.engine, []))
         for visit in range(1, args.visits + 1):
-            version, started, console, failed = attempt(
+            version, started, console, failed, state = attempt(
                 browser, args.url, args.timeout, args.shot)
             print("%s, visit %d: version %s, %s" % (
                 args.engine, visit, version or "not printed",
@@ -126,6 +180,9 @@ def main():
             print("  | " + line)
         print("\nfailed requests:")
         for line in failed or ["(none)"]:
+            print("  " + line)
+        print("\nthe page:")
+        for line in state:
             print("  " + line)
     if ok:
         verdict = "the game started"

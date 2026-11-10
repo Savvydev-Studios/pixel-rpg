@@ -3268,7 +3268,8 @@ class TestLogbook(unittest.TestCase):
         return buffer.getvalue()
 
     def test_a_browser_log_goes_to_the_console_not_the_folder(self):
-        """Redirected, not disabled: pygbag pipes stdout to the console."""
+        """Redirected, not disabled. Under pygbag stdout is its terminal in
+        the page; the page's own console is the next tests' (s98)."""
         book = self.logbook.Logbook(self.dir, console=True)
         said = self._say(book, "the door is open")
         book.close()
@@ -3303,6 +3304,55 @@ class TestLogbook(unittest.TestCase):
         self.assertIn("the missing thing", body)
         self.assertIn("state=overworld", body)
         self.assertEqual(os.listdir(self.dir), [])
+
+    def page(self):
+        """A stand-in for pygbag's `platform`: a page whose console keeps
+        what it is handed."""
+        import types
+        said = {"log": [], "error": []}
+        console = types.SimpleNamespace(
+            log=lambda text: said["log"].append(text),
+            error=lambda text: said["error"].append(text))
+        return (types.SimpleNamespace(window=types.SimpleNamespace(
+            console=console)), said)
+
+    def test_a_browser_log_reaches_the_pages_own_console(self):
+        """s98: pygbag gives `print` to a terminal it draws in the page, so
+        no line reached devtools - nor the check that opens the page, which
+        waited three minutes in three browsers for a game that had started."""
+        from unittest import mock
+        fake, said = self.page()
+        book = self.logbook.Logbook(self.dir, console=True)
+        with mock.patch.dict(sys.modules, {"platform": fake}):
+            self._say(book, "session started")
+        book.close()
+        self.assertTrue(any("session started" in line for line in said["log"]))
+        self.assertTrue(any("Pixel RPG" in line for line in said["log"]),
+                        "the version line goes first")
+
+    def test_a_browser_crash_reaches_the_pages_console_as_an_error(self):
+        import contextlib
+        from unittest import mock
+        fake, said = self.page()
+        book = self.logbook.Logbook(self.dir, console=True)
+        with mock.patch.dict(sys.modules, {"platform": fake}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            try:
+                raise KeyError("the missing thing")
+            except KeyError as exc:
+                book.crash(exc)
+        book.close()
+        self.assertTrue(any("KeyError" in text for text in said["error"]))
+
+    def test_a_platform_without_a_name_does_not_stop_the_log(self):
+        """Rule 1 in a browser: the log's first lines name the platform,
+        and pygbag's `platform` module need not be able to."""
+        import types
+        from unittest import mock
+        with mock.patch.object(self.logbook, "platform",
+                               types.SimpleNamespace()):
+            lines = self.logbook.environment_lines()
+        self.assertIn("platform : %s" % sys.platform, lines)
 
     def test_the_console_choice_follows_is_browser(self):
         """Nothing else in the game should have to know which it is."""

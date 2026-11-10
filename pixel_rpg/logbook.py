@@ -29,6 +29,12 @@ memory and produce something nobody can send. Rule 1 is what decides it:
 the point is that a crash leaves evidence, and in a tab the console is where
 evidence goes. Nothing else about the module changes - same scrubbing, same
 cap, same refusal to ever raise.
+
+**And "the console" has to be the page's own** (handoff s98). pygbag hands
+Python's `print` to a terminal it draws inside the page, not to the
+browser's console, so every line - a crash report included - reached
+neither devtools nor any check that opened the page. Each line now goes to
+`window.console` as well.
 """
 from __future__ import annotations
 
@@ -97,9 +103,39 @@ def environment_lines():
         "build    : %s" % ("packaged exe" if frozen else "from source"),
         "python   : %s" % sys.version.split()[0],
         "pygame   : %s" % pygame_version,
-        "platform : %s %s" % (platform.system(), platform.release()),
+        "platform : %s" % _system(),
         "saves    : %s" % log_dir().parent,
     ]
+
+
+def _system():
+    """`Linux 6.1`, or whatever there is (s98). In a browser `platform` is
+    pygbag's own module, and the first line of a log must not be the thing
+    that takes the game down (rule 1)."""
+    try:
+        return "%s %s" % (platform.system(), platform.release())
+    except Exception:                                  # noqa: BLE001
+        return sys.platform
+
+
+def _page_console():
+    """The browser page's `console`, or None anywhere else."""
+    try:
+        import platform as page                    # pygbag's, in a browser
+        return page.window.console
+    except Exception:                                  # noqa: BLE001
+        return None
+
+
+def _to_page(level, text):
+    """Hand a line to the page's console too. Never raises (rule 1)."""
+    console = _page_console()
+    if console is None:
+        return
+    try:
+        (console.error if level == "error" else console.log)(text)
+    except Exception:                                  # noqa: BLE001
+        pass
 
 
 class Logbook:
@@ -116,7 +152,8 @@ class Logbook:
         # A browser is not a machine with a logs folder. pygbag gives the
         # page a filesystem that lives in memory and dies with the tab, so
         # writing there costs memory and produces a file nobody can open.
-        # It does have a console, and `print` reaches it.
+        # It does have a console - the page's, which `print` does not reach
+        # under pygbag, so `_to_page` does (s98).
         #
         # So the log is not switched *off* in a browser, it is redirected -
         # because the reason this module exists is that a crash on somebody
@@ -170,6 +207,7 @@ class Logbook:
             # The cap still applies: a game that logs in a loop must
             # not be able to fill a console buffer either.
             print(line, end="")
+            _to_page(level, line.rstrip("\n"))
             self._bytes += len(line)
             return
         try:
@@ -227,6 +265,7 @@ class Logbook:
                 # returning None keeps the caller from announcing a
                 # file that does not exist.
                 print(text)
+                _to_page("error", text)
                 return None
             folder = self._folder()
             folder.mkdir(parents=True, exist_ok=True)
