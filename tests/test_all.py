@@ -13,6 +13,7 @@ import struct
 import time
 import dataclasses
 import unittest
+from pathlib import Path
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
@@ -5812,6 +5813,55 @@ class TestTheSuiteCannotEatARealSave(unittest.TestCase):
         game = G.Game()
         self.assertTrue(str(game.saves.dir).startswith(_SAVE_SANDBOX),
                         "a Game in this suite saves to %s" % game.saves.dir)
+
+
+@unittest.skipIf(os.name == "nt", "the paths below are POSIX paths")
+class TestAMacKeepsItsOwnPlaces(unittest.TestCase):
+    """s98: the Mac download. Two places the game writes were Linux's or
+    the bundle's own, and nothing would have said so: saves in a dot-folder
+    Finder hides, and *"Next to the game"* inside `Pixel RPG.app`, where a
+    write breaks the seal on the app's signature."""
+
+    def default_dir(self, platform, home):
+        from unittest import mock
+        from pixel_rpg import config
+        with mock.patch.object(config.sys, "platform", platform), \
+                mock.patch.object(config, "read_save_location",
+                                  return_value="default"), \
+                mock.patch.dict(os.environ, {"HOME": home}):
+            os.environ.pop("PIXEL_RPG_SAVE_DIR", None)
+            os.environ.pop("XDG_DATA_HOME", None)
+            return config.default_save_dir()
+
+    def root(self, platform, executable):
+        from unittest import mock
+        from pixel_rpg import config
+        with mock.patch.object(config.sys, "platform", platform), \
+                mock.patch.object(config.sys, "frozen", True, create=True), \
+                mock.patch.object(config.sys, "executable", executable):
+            return config.project_root(), config.location_file()
+
+    def test_a_mac_saves_where_a_mac_keeps_an_apps_things(self):
+        self.assertEqual(
+            self.default_dir("darwin", "/Users/sam"),
+            Path("/Users/sam/Library/Application Support/Pixel_RPG/saves"))
+
+    def test_linux_keeps_its_own_folder(self):
+        self.assertEqual(self.default_dir("linux", "/home/sam"),
+                         Path("/home/sam/.local/share/Pixel_RPG/saves"))
+
+    def test_next_to_the_game_is_next_to_the_app(self):
+        root, location = self.root(
+            "darwin", "/Applications/Pixel RPG.app/Contents/MacOS/Pixel RPG")
+        self.assertEqual(root, Path("/Applications"))
+        self.assertEqual(location, Path("/Applications/save_location.txt"))
+
+    def test_an_exe_anywhere_else_is_its_own_folder(self):
+        root, _ = self.root("linux", "/opt/games/Pixel_RPG")
+        self.assertEqual(root, Path("/opt/games"))
+        # A folder that is merely *called* MacOS is not a bundle.
+        root, _ = self.root("darwin", "/Users/sam/MacOS/Pixel_RPG")
+        self.assertEqual(root, Path("/Users/sam/MacOS"))
 
 
 class TestNobodyIsDraggedIntoAFight(unittest.TestCase):

@@ -3435,11 +3435,22 @@ def draw_class_select(game):
     list_x = rect.x + 34
     top = rect.y + (128 if narrow else 96)
 
+    # A face taller than the 19- and 13-pixel lines these rows were drawn
+    # for - DejaVu Sans Mono, a Debian's or a Chromebook's (s98) - gets
+    # rows that much taller, and two lines only where both fit (give or
+    # take two pixels); squeezed, its rows are one line. A 19-pixel face
+    # draws exactly what it always did.
+    body_h = assets.font("body").get_height()
+    tiny_h = assets.font("tiny").get_height()
+    taller = max(0, body_h - 19) + max(0, tiny_h - 13)
     start, visible, row_h = list_view(top, rect.bottom - 40,
                                       len(classes_mod.CLASSES),
-                                      game.ui.class_index, natural=46,
+                                      game.ui.class_index, natural=46 + taller,
                                       minimum=28)
-    two_lines = row_h >= 40
+    if taller:
+        two_lines = row_h - 6 >= 6 + body_h + tiny_h - 2
+    else:
+        two_lines = row_h >= 40
     if narrow:
         chosen = classes_mod.CLASSES[game.ui.class_index]
         head = pygame.Rect(rect.x + 34, rect.y + 92, rect.w - 68, 30)
@@ -3460,19 +3471,25 @@ def draw_class_select(game):
         row_highlight(surface, row, i == game.ui.class_index, cls.color,
                       game=game, kind="class", index=i)
         named = draw_text(surface, assets, cls.name if unlocked else "? ? ?",
-                          (row.x + 14, row.y + (6 if two_lines
-                                                else max(1, (row.h - 19) // 2))),
+                          (row.x + 14, row.y + (
+                              6 if two_lines
+                              else max(1, (row.h - max(19, body_h)) // 2))),
                           "body", cls.color if unlocked else FAINT)
         if unlocked and cls.archetype:
             # "Emberwright" does not tell you it is the mage. This does.
             # Centred on the row when the row is two lines, on the name
-            # when it is one (§94).
+            # when it is one (§94) - and on the name in a taller face, whose
+            # two lines leave the row's middle on neither (s98).
             draw_text(surface, assets, cls.archetype,
-                      (row.right - 14, row.y + row.h // 2 if two_lines
-                       else named.centery), "tiny", DIM, right=True)
+                      (row.right - 14, row.y + row.h // 2
+                       if two_lines and not taller else named.centery),
+                      "tiny", DIM, right=True)
         if two_lines:
+            # Under the name's line (s98): 25 is where a 19-pixel face ends,
+            # and DejaVu Sans Mono's ends at 29. The face's height, not this
+            # name's - a name with a descender renders a pixel taller.
             draw_text(surface, assets, cls.title if unlocked else "locked",
-                      (row.x + 14, row.y + 25), "tiny",
+                      (row.x + 14, row.y + 6 + max(19, body_h)), "tiny",
                       DIM if unlocked else FAINT)
     if not narrow:
         scroll_note(surface, assets,
@@ -3679,9 +3696,18 @@ def draw_modifier_select(game):
     # 40 rather than 52, because on a short window the choice is between a
     # squeezed list with costs and a roomy one without, and the cost is
     # the half nobody can look up elsewhere.
+    # **How short a row may get is the font's to say** (s98). A row holds
+    # the name 4 below its top and the note 3 above its bottom, and the
+    # highlight is 6 shorter than the pitch: 44 is room for Consolas and
+    # FreeMono, but DejaVu Sans Mono - what a Debian or a Chromebook's Linux
+    # hands the game - is four pixels taller a line, and at 44 its two lines
+    # ran into each other. Two pixels of overlap still read as kerning.
+    two_line_pitch = (6 + 4 + assets.font("body").get_height()
+                      + assets.font("tiny").get_height() + 3 - 2)
     start, visible, row_h = list_view(top, rect.bottom - 30, total_rows,
-                                      game.ui.modifier_index, natural=52,
-                                      minimum=44)
+                                      game.ui.modifier_index,
+                                      natural=max(52, two_line_pitch),
+                                      minimum=max(44, two_line_pitch))
     # Two lines of text per row need the height; below that the second line
     # is dropped rather than drawn over the first.
     roomy = row_h >= 40

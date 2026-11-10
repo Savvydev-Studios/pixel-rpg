@@ -1,4 +1,5 @@
-"""One-command rebuild of Pixel_RPG.exe - or, on Linux, of Pixel_RPG.
+"""One-command rebuild of Pixel_RPG.exe - or, on Linux, of Pixel_RPG, or
+on a Mac, of `dist/Pixel RPG.app`.
 
 **The same recipe on both** (s96): `tools/Pixel_RPG.spec`, which is in the
 repository now. On Windows it makes the exe with its icon; on Linux it
@@ -34,15 +35,22 @@ def main():
     os.chdir(ROOT)
     icon = os.path.join("build_assets", "Pixel_RPG.ico")
 
+    mac = sys.platform == "darwin"
+
     print("[1/4] building the icon ...")
     subprocess.run([sys.executable, os.path.join("tools", "make_icon.py"),
                     icon], check=True)
+    if mac:
+        # The app's icon is a .icns, packed from the same artwork (s98).
+        subprocess.run([sys.executable, os.path.join("tools", "make_icon.py"),
+                        os.path.join("build_assets", "Pixel_RPG.icns")],
+                       check=True)
 
     # If the game is open, Windows holds the exe and PyInstaller cannot
     # replace it. Build to a side name instead of failing, so someone can keep
     # playing while a new build is made.
     target = "Pixel_RPG"
-    if _locked(os.path.join(ROOT, "Pixel_RPG.exe")):
+    if not mac and _locked(os.path.join(ROOT, "Pixel_RPG.exe")):
         target = "Pixel_RPG.new"
         print("NOTE: Pixel_RPG.exe is running, so this build goes to")
         print("      Pixel_RPG.new.exe. Close the game and rename it over the")
@@ -51,19 +59,33 @@ def main():
     print("[2/4] running PyInstaller ...")
     env = dict(os.environ)
     env["PIXEL_RPG_EXE_NAME"] = target
+    # A Mac app is a folder, and a folder of loose builds does not belong at
+    # the top of the project: it goes to dist/, which git ignores.
     result = subprocess.run(
         [sys.executable, "-m", "PyInstaller", "--noconfirm",
-         "--distpath", ".", "--workpath", os.path.join("build", "work"),
+         "--distpath", "dist" if mac else ".",
+         "--workpath", os.path.join("build", "work"),
          os.path.join("tools", "Pixel_RPG.spec")], env=env)
     if result.returncode != 0:
         print("build failed")
         return result.returncode
 
-    exe = os.path.join(ROOT, target + (".exe" if os.name == "nt" else ""))
+    if mac:
+        app = os.path.join(ROOT, "dist", "Pixel RPG.app")
+        exe = os.path.join(app, "Contents", "MacOS", target)
+    else:
+        exe = os.path.join(ROOT, target + (".exe" if os.name == "nt" else ""))
     if not os.path.isfile(exe):
         print("PyInstaller reported success but no exe was produced")
         return 1
-    print("built %s (%.1f MB)" % (exe, os.path.getsize(exe) / 1048576))
+    if mac:
+        # lstat: the bundle holds symlinks, and one counted twice - or one
+        # whose target is elsewhere - is not the app's size.
+        size = sum(os.lstat(os.path.join(folder, name)).st_size
+                   for folder, _, names in os.walk(app) for name in names)
+        print("built %s (%.1f MB)" % (app, size / 1048576))
+    else:
+        print("built %s (%.1f MB)" % (exe, os.path.getsize(exe) / 1048576))
 
     # Verify before declaring success. A build that imports fine on this
     # machine can still be missing a module inside the bundle, and that
@@ -85,7 +107,8 @@ def main():
                   % script)
             return check.returncode
     print("")
-    print("%s is built and verified." % os.path.basename(exe))
+    print("%s is built and verified."
+          % ("Pixel RPG.app" if mac else os.path.basename(exe)))
     if target != "Pixel_RPG":
         print("Close the game, then run update.bat to put it in place.")
     return 0

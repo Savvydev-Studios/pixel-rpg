@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller recipe for the one-file game: Windows and Linux alike.
+"""PyInstaller recipe for the game: Windows and Linux alike, and a Mac app.
 
     python tools/build_exe.py           # the supported way in
 
@@ -46,22 +46,59 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.datas,
-    [],
-    name=NAME,
-    debug=False,
-    strip=False,
-    upx=False,
-    runtime_tmpdir=None,
-    # Windowed: no console window behind the game. A startup failure is a
-    # dialog, which is why tools/verify_exe.py drives --selftest instead
-    # of asking whether a process is alive (handoff s7).
-    console=False,
-    # The .ico is a Windows resource. Linux takes its icon from the
-    # launcher entry instead (tools/build_deb.py).
-    icon=ICON if os.name == "nt" else None,
-)
+# **A Mac gets `Pixel RPG.app`** (handoff s98) - a folder the Finder shows
+# as one app, which is what a Mac user expects to double-click and drag to
+# Applications. One-folder inside, because PyInstaller is retiring one-file
+# app bundles: the app *is* the single thing the player handles.
+if sys.platform == "darwin":
+    import re
+    with open(os.path.join(ROOT, "pixel_rpg", "__init__.py")) as handle:
+        VERSION = re.search(r'__version__ = "(.*)"', handle.read()).group(1)
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name=NAME,
+        debug=False,
+        strip=False,
+        upx=False,
+        console=False,
+    )
+    collected = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False,
+                        name=NAME)
+    app = BUNDLE(
+        collected,
+        name="Pixel RPG.app",
+        icon=os.path.join(ROOT, "build_assets", "Pixel_RPG.icns"),
+        bundle_identifier="io.github.savvydev-studios.pixel-rpg",
+        version=VERSION,
+        info_plist={
+            "CFBundleDisplayName": "Pixel RPG",
+            "CFBundleShortVersionString": VERSION,
+            "CFBundleVersion": VERSION,
+            # Retina: drawn at the screen's real resolution, not upscaled.
+            "NSHighResolutionCapable": True,
+            "LSApplicationCategoryType": "public.app-category.role-playing-games",
+        },
+    )
+else:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.datas,
+        [],
+        name=NAME,
+        debug=False,
+        strip=False,
+        upx=False,
+        runtime_tmpdir=None,
+        # Windowed: no console window behind the game. A startup failure is a
+        # dialog, which is why tools/verify_exe.py drives --selftest instead
+        # of asking whether a process is alive (handoff s7).
+        console=False,
+        # The .ico is a Windows resource. Linux takes its icon from the
+        # launcher entry instead (tools/build_deb.py).
+        icon=ICON if os.name == "nt" else None,
+    )

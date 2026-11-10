@@ -41,8 +41,11 @@ except subprocess.TimeoutExpired:
     print("FAILED: the executable never exited within %ds." % TIMEOUT)
     print("        That usually means a startup error dialog is waiting for")
     print("        someone to click Close - i.e. a missing module.")
-    subprocess.run(["taskkill", "/IM", os.path.basename(EXE), "/F"],
-                   capture_output=True)
+    # `run` has already killed the process it started; a Windows error
+    # dialog can outlive it, which is what this is for.
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/IM", os.path.basename(EXE), "/F"],
+                       capture_output=True)
     sys.exit(1)
 
 lines = []

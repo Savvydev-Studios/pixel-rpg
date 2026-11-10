@@ -55,6 +55,10 @@ Pixel_RPG.new.exe
 # GitHub Release, never tracked.
 /Pixel_RPG
 pixel-rpg_*.deb
+# The Mac app (tools/build_exe.py on a Mac, s98): its icon is packed at
+# build time, and the app and its zip are built into dist/ (ignored above).
+build_assets/*.icns
+Pixel_RPG-macOS-*.zip
 shots/
 shots_ui/
 shots_new/

@@ -2,9 +2,12 @@
 """Open the game's website in a real browser and wait for the game to start.
 
     python tools/check_site.py URL [--version 4.47.0] [--shot site.png]
+                                   [--engine chromium|firefox|webkit]
 
-The build workflow's `site` job runs this right after the website is
-published (handoff s97). A browser build has gone wrong before in ways
+The build workflow runs it twice: `browsers` opens every push's web build
+in all three engines before anything is published (handoff s98), and
+`site` opens the website right after it goes up (s97). WebKit is Safari's
+engine. A browser build has gone wrong before in ways
 nothing reported - a missing piece is a grey canvas and a silent console
 (s39) - so this does what a player does: open the page, click once when it
 asks (a page will not start before a click), and wait for the game's own
@@ -19,13 +22,13 @@ failure. A screenshot is saved either way. On a failure it prints the
 console's last lines and every request that failed - the evidence a grey
 page otherwise leaves nowhere.
 
-Needs Playwright and a Chromium for it, which the game does not:
+Needs Playwright and the browser it drives, which the game does not:
 
     python -m pip install playwright
     python -m playwright install --with-deps chromium
 
 A cloud session has a Chromium already, of whatever revision its image
-shipped; `--browser /opt/pw-browsers/chromium` uses it instead.
+shipped; `--executable /opt/pw-browsers/chromium` uses it instead.
 """
 import argparse
 import re
@@ -89,21 +92,26 @@ def main():
                         help="seconds to wait for the game, per visit")
     parser.add_argument("--visits", type=int, default=4,
                         help="visits before an old version counts as failure")
-    parser.add_argument("--browser", help="a Chromium to use instead of "
-                        "Playwright's own")
+    parser.add_argument("--engine", default="chromium",
+                        choices=("chromium", "firefox", "webkit"))
+    parser.add_argument("--executable", help="a browser to use instead of "
+                        "Playwright's own build of the engine")
     args = parser.parse_args()
 
     from playwright.sync_api import sync_playwright
 
+    # A runner has no GPU, and the page draws through WebGL either way:
+    # Chromium has to be told to draw it in software.
+    flags = {"chromium": ["--use-angle=swiftshader",
+                          "--enable-unsafe-swiftshader"]}
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(executable_path=args.browser, args=[
-            # A runner has no GPU; the page draws through WebGL either way.
-            "--use-angle=swiftshader", "--enable-unsafe-swiftshader"])
+        browser = getattr(playwright, args.engine).launch(
+            executable_path=args.executable, args=flags.get(args.engine, []))
         for visit in range(1, args.visits + 1):
             version, started, console, failed = attempt(
                 browser, args.url, args.timeout, args.shot)
-            print("visit %d: version %s, %s" % (
-                visit, version or "not printed",
+            print("%s, visit %d: version %s, %s" % (
+                args.engine, visit, version or "not printed",
                 "started" if started else "did not start"))
             if not started or args.version in (None, version):
                 break

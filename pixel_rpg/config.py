@@ -134,9 +134,20 @@ SAVE_LOCATION_LABEL = {
 
 
 def project_root():
-    """The folder holding the game, whether run from source or as an exe."""
+    """The folder holding the game, whether run from source or as an exe.
+
+    **On a Mac that is the folder holding `Pixel RPG.app`** (handoff s98),
+    not the folder inside it the executable sits in. Anything written in the
+    bundle breaks the seal on its signature - and "next to the game" means
+    next to what the player can see, which is the app.
+    """
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
+        here = Path(sys.executable).resolve().parent
+        bundle = here.parent.parent              # X.app/Contents/MacOS
+        if (sys.platform == "darwin" and here.name == "MacOS"
+                and bundle.suffix == ".app"):
+            return bundle.parent
+        return here
     return Path(__file__).resolve().parent.parent
 
 
@@ -253,6 +264,11 @@ def default_save_dir():
     if os.name == "nt":
         base = os.environ.get("APPDATA") or os.path.expanduser("~")
         return Path(base) / APP_NAME / "saves"
+    # A Mac's own place for what an app keeps (s98), not a dot-folder that
+    # Finder hides.
+    if sys.platform == "darwin":
+        return (Path.home() / "Library" / "Application Support" / APP_NAME
+                / "saves")
     xdg = os.environ.get("XDG_DATA_HOME")
     base = Path(xdg) if xdg else Path.home() / ".local" / "share"
     return base / APP_NAME / "saves"

@@ -14,8 +14,9 @@ a single image or sound file in this repository.
 
 **[Download the game](https://github.com/Savvydev-Studios/pixel-rpg/releases/latest)**
 from the repository's **Releases** page (the right-hand side of its front
-page): `Pixel_RPG.exe` for Windows, a `.deb` for a Chromebook or Linux.
-Nothing to install - Python, pygame and SDL are inside.
+page): `Pixel_RPG.exe` for Windows, a zip with the app for a Mac, a `.deb`
+for a Chromebook or Linux. Nothing to install - Python, pygame and SDL are
+inside.
 
 **[Or play it in your browser](https://savvydev-studios.github.io/pixel-rpg/)** -
 no download at all. See *In a browser* below for what that version cannot do.
@@ -35,6 +36,29 @@ in. Copy the folder anywhere, put it on a USB stick, send it to someone
 else's PC — `run.bat` resolves every path relative to itself, so it works
 wherever it lands. If the exe is ever missing, `run.bat` falls back to running
 from source.
+
+### On a Mac
+
+From the repository's **Releases**, download the zip for your kind of
+Mac. To check which you have, open the Apple menu > **About This Mac**:
+
+- **Chip: Apple M1** (or M2, M3, M4...) - `Pixel_RPG-macOS-AppleSilicon.zip`
+- **Processor: Intel** - `Pixel_RPG-macOS-Intel.zip`
+
+Safari unzips it into Downloads; drag **Pixel RPG** into Applications.
+
+The app is not from the App Store, and Apple has not checked it (that
+takes a paid developer account), so **the first time, macOS refuses to
+open it** - *"Apple could not verify..."*. Choose **Done**, then open
+**System Settings > Privacy & Security**, scroll down to **Security**, click
+**Open Anyway** next to Pixel RPG and confirm with your password. The
+button is there for about an hour after the refusal. From then on it opens
+like any other app.
+
+Saves live in `~/Library/Application Support/Pixel_RPG`, so a newer
+download keeps every save. On a Mac laptop the F-keys may need `fn`: `fn`
++ `F5` saves. `F11` is the Mac's own *Show Desktop*, so use **Settings >
+Fullscreen** instead.
 
 ### On a Chromebook (or any Linux)
 
@@ -66,7 +90,9 @@ the Files app only opens it in the browser as text.
 **[savvydev-studios.github.io/pixel-rpg](https://savvydev-studios.github.io/pixel-rpg/)**
 - the same version as the newest download, and how a Chromebook without
 Linux plays it. Click the page once to start (a browser will not play
-sound before a click).
+sound before a click). Before a version is published, it is opened in
+Chromium (Chrome, Edge, a Chromebook), Firefox and WebKit (Safari's
+engine), and has to start in all three.
 
 - **Saves stay in that browser**, on that device. Clearing the browser's
   site data deletes them, and they do not move to the download or back.
@@ -475,10 +501,11 @@ Two ways to bring it:
 ## Known limitations
 
 - Attribute points are not refundable. There is no respec.
-- The `.exe` is Windows-only. On Linux - a Chromebook's included - use
-  `bash run.sh`; on macOS, run from source.
-- Windows may warn about an unsigned executable the first time; the build is
-  unsigned because code-signing certificates cost money.
+- Each download is for one system: the `.exe` for Windows, the zips for a
+  Mac, the `.deb`s for a Chromebook or Linux.
+- Windows and macOS both warn about the game the first time, because it is
+  not signed (Windows) or notarised by Apple (macOS) - both cost money. See
+  *Playing it* for the one-time way past each.
 
 ---
 

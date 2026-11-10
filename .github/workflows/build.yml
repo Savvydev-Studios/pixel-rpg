@@ -4,6 +4,8 @@
 #   Linux / Chromebook with Linux on
 #                    pixel-rpg_<version>_amd64.deb and _arm64.deb - ChromeOS
 #                    installs these from the Files app with a double-click
+#   Mac              Pixel_RPG-macOS-AppleSilicon.zip and -Intel.zip, each
+#                    holding Pixel RPG.app (s98)
 #   Any browser      the web build - the only way a Chromebook with Linux
 #                    locked by a school can play at all - published as the
 #                    repository's GitHub Pages site too
@@ -79,10 +81,69 @@ jobs:
         run: python tools/build_exe.py
       - name: Pack it for a Chromebook
         run: python tools/build_deb.py
+      - name: Measure every screen in a Chromebook's font
+        # A Chromebook's Linux is this same Debian 12, and with no Consolas
+        # the game resolves DejaVu Sans Mono: four pixels taller a line than
+        # the faces it was drawn in, and 34 layout problems until 4.48.0
+        # (s98). After the packing, so nothing here reaches the .deb.
+        if: matrix.arch == 'amd64'
+        run: |
+          apt-get install -y --no-install-recommends fonts-dejavu-core fontconfig
+          python tests/layout.py
       - uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.arch }}
           path: pixel-rpg_*.deb
+          if-no-files-found: error
+
+  macos:
+    strategy:
+      fail-fast: false
+      # One app per kind of Mac (s98). pygame ships separate Apple Silicon
+      # and Intel wheels, so there is no one build that is both. GitHub's
+      # last Intel image is macos-15-intel, kept until macOS 15 is retired
+      # in fall 2027 (checked 2026-11-10); after that an Intel build needs
+      # another way, or Apple Silicon alone.
+      matrix:
+        include:
+          - { runner: macos-15, arch: AppleSilicon }
+          - { runner: macos-15-intel, arch: Intel }
+    runs-on: ${{ matrix.runner }}
+    env:
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install build tools
+        run: python -m pip install -r requirements.txt "pyinstaller>=6"
+      - name: Build and verify Pixel RPG.app
+        run: python tools/build_exe.py
+      - name: Check the app's signature is whole
+        # PyInstaller signs the app ad hoc, and an Apple Silicon Mac will not
+        # run code without a signature. A seal broken after signing is what
+        # macOS reports as "damaged" - so it is caught here instead.
+        run: codesign --verify --deep --strict --verbose=2 "dist/Pixel RPG.app"
+      - name: Show the oldest macOS it runs on
+        run: |
+          otool -l "dist/Pixel RPG.app/Contents/MacOS/Pixel_RPG" | grep -A4 LC_BUILD_VERSION | grep -E "minos" || true
+          find "dist/Pixel RPG.app" -name "libpython*.dylib" -exec otool -l {} \; | grep -A4 LC_BUILD_VERSION | grep -E "minos" | sort -u || true
+      - name: Measure every screen in the Mac's own font
+        # The game asks for Consolas, then DejaVu, then Menlo; a Mac has
+        # Menlo. "0 layout problems" is a claim about a font (s94), so this
+        # makes it a claim about the one a Mac player sees.
+        if: matrix.arch == 'AppleSilicon'
+        run: python tests/layout.py
+      - name: Zip it the way a Mac does
+        # ditto keeps the bundle's symlinks and signature; Safari unzips it
+        # on download and leaves Pixel RPG.app in Downloads.
+        run: ditto -c -k --keepParent "dist/Pixel RPG.app" "Pixel_RPG-macOS-${{ matrix.arch }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: Pixel_RPG-macOS-*.zip
           if-no-files-found: error
 
   web:
@@ -102,6 +163,44 @@ jobs:
           path: build/web
           if-no-files-found: error
 
+  browsers:
+    # **The browser build opened in three browsers, before anything is
+    # published** (s98): Chromium (Chrome, Edge, every Chromebook), Firefox,
+    # and WebKit (Safari's engine). Served by a plain static server - which
+    # is all a web host is - at 127.0.0.1 and not at "localhost": pygbag
+    # treats a localhost page as its own developer server and asks it for
+    # pieces a real host never serves (s97). A release waits for all three.
+    needs: web
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: web
+          path: site
+      - name: Install a browser
+        run: |
+          python -m pip install "playwright==1.64.1"
+          python -m playwright install --with-deps ${{ matrix.engine }}
+      - name: Open the build and wait for the game
+        run: |
+          python -m http.server 8000 --bind 127.0.0.1 --directory site > server.log 2>&1 &
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' pixel_rpg/__init__.py)
+          python tools/check_site.py http://127.0.0.1:8000/ --engine ${{ matrix.engine }} --version "$version" --shot ${{ matrix.engine }}.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-${{ matrix.engine }}
+          path: ${{ matrix.engine }}.png
+          if-no-files-found: ignore
+
   release:
     # **Two ways to publish** (s96). A tag `v*` pushed to GitHub, as
     # before - or the Actions tab: *build* -> *Run workflow* with
@@ -114,7 +213,7 @@ jobs:
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
       (github.event_name == 'workflow_dispatch' && inputs.release)
-    needs: [windows, linux, web]
+    needs: [windows, linux, macos, web, browsers]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -135,7 +234,7 @@ jobs:
             tag="v$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' pixel_rpg/__init__.py)"
           fi
           [ "$tag" != "v" ] || { echo "no version in pixel_rpg/__init__.py"; exit 1; }
-          files="dist/windows/Pixel_RPG.exe $(ls dist/linux-*/pixel-rpg_*.deb) dist/pixel-rpg-web.zip"
+          files="dist/windows/Pixel_RPG.exe $(ls dist/linux-*/pixel-rpg_*.deb) $(ls dist/macos-*/Pixel_RPG-macOS-*.zip) dist/pixel-rpg-web.zip"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber $files
           else
@@ -143,7 +242,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "Pixel RPG $tag" \
-              --notes "Windows: download Pixel_RPG.exe and run it (the first time, Windows may say it protected your PC: More info, then Run anyway). Chromebook with Linux on: download the .deb for your Chromebook (amd64 for Intel/AMD, arm64 for ARM) and double-click it in Files. Nothing else to install. No download at all: play it in a browser at https://$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]').github.io/${GITHUB_REPOSITORY#*/}/" \
+              --notes "Windows: download Pixel_RPG.exe and run it (the first time, Windows may say it protected your PC: More info, then Run anyway). Mac: download the zip for your Mac (AppleSilicon for M1 and later, Intel for older ones), open Pixel RPG.app, and the first time allow it in System Settings, Privacy and Security, Open Anyway. Chromebook with Linux on: download the .deb for your Chromebook (amd64 for Intel/AMD, arm64 for ARM) and double-click it in Files. Nothing else to install. No download at all: play it in a browser at https://$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]').github.io/${GITHUB_REPOSITORY#*/}/" \
               $files
           fi
 

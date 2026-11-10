@@ -114,6 +114,36 @@ def build(out_path):
     return out_path
 
 
+# The Mac's icon container (s98): a type code per slot, each holding a PNG.
+# The @2x slots are the Retina faces of the size before them, so the same
+# artwork is drawn natively at every pixel size the Finder asks for.
+ICNS_SLOTS = (("icp4", 16), ("icp5", 32), ("ic11", 32), ("ic12", 64),
+              ("ic07", 128), ("ic13", 256), ("ic08", 256), ("ic14", 512),
+              ("ic09", 512), ("ic10", 1024))
+
+
+def build_icns(out_path):
+    """Pixel_RPG.icns for the Mac app, packed here so no Mac is needed."""
+    __import__("pixel_rpg.assets", fromlist=["a"]).init_pygame()
+    pygame.display.set_mode((64, 64))
+    tmpdir = os.path.dirname(os.path.abspath(out_path))
+    os.makedirs(tmpdir, exist_ok=True)
+
+    faces = {}
+    for _, size in ICNS_SLOTS:
+        if size not in faces:
+            faces[size] = png_bytes(draw_icon(size), tmpdir)
+            os.remove(os.path.join(tmpdir, "icon_%d.png" % size))
+    # 'icns' and the whole length, then per slot: type, length (with its
+    # own 8-byte header), payload. Big-endian throughout.
+    body = b"".join(code.encode("ascii") + struct.pack(">I", 8 + len(faces[size]))
+                    + faces[size] for code, size in ICNS_SLOTS)
+    with open(out_path, "wb") as handle:
+        handle.write(b"icns" + struct.pack(">I", 8 + len(body)) + body)
+    pygame.quit()
+    return out_path
+
+
 def build_png(out_path, size=64):
     """One PNG face, which is what a browser tab wants.
 
@@ -136,6 +166,11 @@ if __name__ == "__main__":
     if target.lower().endswith(".png"):
         path = build_png(target)
         print("wrote %s (%d bytes)" % (path, os.path.getsize(path)))
+        raise SystemExit(0)
+    if target.lower().endswith(".icns"):
+        path = build_icns(target)
+        print("wrote %s (%d bytes, %d slots)"
+              % (path, os.path.getsize(path), len(ICNS_SLOTS)))
         raise SystemExit(0)
     path = build(target)
     print("wrote %s (%d bytes, %d sizes)"
